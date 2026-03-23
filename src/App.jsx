@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import AdSlot, { ExportAd } from "./AdSlot";
+import { isWeb } from "./edition";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SCREEN_DPI = 96;
@@ -258,6 +260,8 @@ export default function GangSheetBuilder() {
   const [showCSV, setShowCSV]             = useState(false);
   const [showFillConfirm, setShowFillConfirm] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showExportAd, setShowExportAd] = useState(false);
+  const pendingExportRef = useRef(null);
   const [exportAllPending, setExportAllPending] = useState(false);
   const [exporting, setExporting]         = useState(false);
   const [exportProgress, setExportProgress] = useState("");
@@ -1615,10 +1619,9 @@ export default function GangSheetBuilder() {
     setExportPct(pctFn(100));
   };
   const cancelExport=()=>{exportCancelRef.current=true;};
-  const startExport=async(all=false)=>{
+  const doExport=async(all=false)=>{
     exportCancelRef.current=false;
     setShowExportDialog(false);setExporting(true);setExportAllMode(all);setExportPct(0);
-    // yield a frame so the overlay renders before heavy work
     await new Promise(r=>setTimeout(r,50));
     try{
       if(all){
@@ -1637,6 +1640,20 @@ export default function GangSheetBuilder() {
       setExporting(false);setExportProgress("");setExportPct(0);
     }
   };
+
+  const startExport=(all=false)=>{
+    if(isWeb){
+      pendingExportRef.current=all;
+      setShowExportDialog(false);
+      setShowExportAd(true);
+    } else {
+      doExport(all);
+    }
+  };
+  const onExportAdDone=useCallback(()=>{
+    setShowExportAd(false);
+    doExport(pendingExportRef.current||false);
+  },[]);
 
   // ── CSV ──
   const csvText=()=>{
@@ -2170,6 +2187,7 @@ export default function GangSheetBuilder() {
           </div>
         </div>
       )}
+      {showExportAd&&<ExportAd onClose={onExportAdDone}/>}
       {exporting&&(
         <div style={S.overlay}>
           <div style={S.spinner}/>
@@ -2224,6 +2242,7 @@ export default function GangSheetBuilder() {
 
         {/* ── MAIN canvas ── */}
         <div style={S.main}>
+          {isWeb&&<AdSlot variant="banner" style={{flexShrink:0,height:50,background:C.surface,borderBottom:`1px solid ${C.border}`}}/>}
           {/* Sheet tab bar */}
           <div style={S.sheetTabBar}>
             {sheets.map(s=>(
@@ -2320,6 +2339,7 @@ export default function GangSheetBuilder() {
             <button style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"0 4px"}} onClick={()=>setShowLayers(false)} title="Hide layers panel">✕</button>
           </div>
           {layersPanelJsx}
+          {isWeb&&<AdSlot variant="sidebar" style={{flexShrink:0,padding:"8px",minHeight:200}}/>}
         </div>}
       </div>
 
