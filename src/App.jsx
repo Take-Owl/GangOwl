@@ -2242,7 +2242,7 @@ export default function GangSheetBuilder() {
 
         {/* ── MAIN canvas ── */}
         <div style={S.main}>
-          {isWeb&&<AdSlot variant="banner" style={{flexShrink:0,height:50,background:C.surface,borderBottom:`1px solid ${C.border}`}}/>}
+          {isWeb&&<AdSlot variant="banner" style={{flexShrink:0,height:50,maxHeight:50,overflow:"hidden",background:C.surface,borderBottom:`1px solid ${C.border}`}}/>}
           {/* Sheet tab bar */}
           <div style={S.sheetTabBar}>
             {sheets.map(s=>(
@@ -2339,7 +2339,7 @@ export default function GangSheetBuilder() {
             <button style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"0 4px"}} onClick={()=>setShowLayers(false)} title="Hide layers panel">✕</button>
           </div>
           {layersPanelJsx}
-          {isWeb&&<AdSlot variant="sidebar" style={{flexShrink:0,padding:"8px",minHeight:200}}/>}
+          {isWeb&&<AdSlot variant="sidebar" style={{flexShrink:0,margin:"8px",height:200,maxHeight:200,overflow:"hidden"}}/>}
         </div>}
       </div>
 
