@@ -2222,6 +2222,7 @@ export default function GangSheetBuilder() {
         </div>
       )}
 
+      {isWeb&&<AdSlot variant="banner" style={{width:"100%",background:C.surface,borderBottom:`1px solid ${C.border}`}}/>}
       <div style={S.topRow}>
         {/* ── LEFT sidebar (tablet+desktop) ── */}
         <div style={S.left}>
@@ -2242,7 +2243,6 @@ export default function GangSheetBuilder() {
 
         {/* ── MAIN canvas ── */}
         <div style={S.main}>
-          {isWeb&&<AdSlot variant="banner" style={{flexShrink:0,height:50,maxHeight:50,overflow:"hidden",background:C.surface,borderBottom:`1px solid ${C.border}`}}/>}
           {/* Sheet tab bar */}
           <div style={S.sheetTabBar}>
             {sheets.map(s=>(
