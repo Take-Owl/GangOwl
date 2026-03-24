@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://gang-owl.vercel.app/sitemap.xml
+Sitemap: https://gangowl.com/sitemap.xml
