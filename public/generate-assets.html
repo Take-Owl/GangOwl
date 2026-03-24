@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head><title>Generate Assets</title></head>
+<body style="background:#222;color:#fff;font-family:monospace;padding:20px">
+<h2>GangOwl Asset Generator</h2>
+<p>Right-click each image and "Save image as..." to download.</p>
+<div id="output" style="display:flex;flex-wrap:wrap;gap:20px"></div>
+<script>
+const BG = '#0c0b12';
+const SURFACE = '#13121c';
+const ACCENT = '#6366f1';
+const AMBER = '#f59e0b';
+const TEXT = '#e2e0ff';
+const MUTED = '#3d3b60';
+
+function drawOwl(ctx, cx, cy, size) {
+  const s = size / 64;
+  // Eyes
+  ctx.fillStyle = ACCENT;
+  ctx.beginPath(); ctx.arc(cx - 10*s, cy - 6*s, 9*s, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 10*s, cy - 6*s, 9*s, 0, Math.PI*2); ctx.fill();
+  // Pupils
+  ctx.fillStyle = BG;
+  ctx.beginPath(); ctx.arc(cx - 10*s, cy - 7*s, 5*s, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 10*s, cy - 7*s, 5*s, 0, Math.PI*2); ctx.fill();
+  // Highlights
+  ctx.fillStyle = TEXT;
+  ctx.beginPath(); ctx.arc(cx - 9*s, cy - 8*s, 2*s, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 11*s, cy - 8*s, 2*s, 0, Math.PI*2); ctx.fill();
+  // Beak
+  ctx.fillStyle = AMBER;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - 3*s, cy + 6*s); ctx.lineTo(cx, cy + 4*s); ctx.lineTo(cx + 3*s, cy + 6*s); ctx.closePath(); ctx.fill();
+  // Mouth
+  ctx.strokeStyle = AMBER; ctx.lineWidth = 2.5*s; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - 6*s, cy + 4*s); ctx.quadraticCurveTo(cx, cy + 10*s, cx + 6*s, cy + 4*s); ctx.stroke();
+  // Ear tufts
+  ctx.strokeStyle = ACCENT; ctx.lineWidth = 2.5*s;
+  ctx.beginPath(); ctx.moveTo(cx - 22*s, cy - 14*s); ctx.quadraticCurveTo(cx - 20*s, cy - 24*s, cx - 10*s, cy - 20*s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + 22*s, cy - 14*s); ctx.quadraticCurveTo(cx + 20*s, cy - 24*s, cx + 10*s, cy - 20*s); ctx.stroke();
+}
+
+function drawText(ctx, text, x, y, size, color, align='center') {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${size}px 'Segoe UI', system-ui, sans-serif`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+
+function createAsset(name, w, h, drawFn) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  drawFn(ctx, w, h);
+  const div = document.createElement('div');
+  div.innerHTML = `<div style="margin-bottom:4px;font-size:12px">${name} (${w}×${h})</div>`;
+  const img = new Image();
+  img.src = c.toDataURL('image/png');
+  img.style.cssText = `max-width:300px;border:1px solid #444;border-radius:8px`;
+  div.appendChild(img);
+  // Download link
+  const a = document.createElement('a');
+  a.href = c.toDataURL('image/png');
+  a.download = name + '.png';
+  a.textContent = 'Download';
+  a.style.cssText = 'display:block;margin-top:4px;color:#6366f1;font-size:11px';
+  div.appendChild(a);
+  document.getElementById('output').appendChild(div);
+}
+
+// 1. Desktop icon 256x256
+createAsset('icon-256', 256, 256, (ctx, w, h) => {
+  // Rounded rect background
+  const r = 40;
+  ctx.fillStyle = SURFACE;
+  ctx.beginPath();
+  ctx.moveTo(r, 0); ctx.lineTo(w-r, 0); ctx.quadraticCurveTo(w, 0, w, r);
+  ctx.lineTo(w, h-r); ctx.quadraticCurveTo(w, h, w-r, h);
+  ctx.lineTo(r, h); ctx.quadraticCurveTo(0, h, 0, h-r);
+  ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.closePath(); ctx.fill();
+  // Border
+  ctx.strokeStyle = ACCENT; ctx.lineWidth = 3; ctx.stroke();
+  drawOwl(ctx, w/2, h/2 - 10, 180);
+  drawText(ctx, 'GangOwl', w/2, h - 40, 28, TEXT);
+});
+
+// 2. Desktop icon 128x128
+createAsset('icon-128', 128, 128, (ctx, w, h) => {
+  const r = 20;
+  ctx.fillStyle = SURFACE;
+  ctx.beginPath();
+  ctx.moveTo(r, 0); ctx.lineTo(w-r, 0); ctx.quadraticCurveTo(w, 0, w, r);
+  ctx.lineTo(w, h-r); ctx.quadraticCurveTo(w, h, w-r, h);
+  ctx.lineTo(r, h); ctx.quadraticCurveTo(0, h, 0, h-r);
+  ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = ACCENT; ctx.lineWidth = 2; ctx.stroke();
+  drawOwl(ctx, w/2, h/2 - 2, 90);
+});
+
+// 3. Desktop icon 32x32
+createAsset('icon-32', 32, 32, (ctx, w, h) => {
+  ctx.fillStyle = SURFACE;
+  ctx.beginPath();
+  ctx.arc(16, 16, 16, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = ACCENT;
+  ctx.beginPath(); ctx.arc(11, 14, 4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(21, 14, 4, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = BG;
+  ctx.beginPath(); ctx.arc(11, 13.5, 2.2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(21, 13.5, 2.2, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = TEXT;
+  ctx.beginPath(); ctx.arc(11.5, 13, 0.8, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(21.5, 13, 0.8, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = AMBER;
+  ctx.beginPath(); ctx.moveTo(16, 17); ctx.lineTo(14.5, 20); ctx.lineTo(16, 19); ctx.lineTo(17.5, 20); ctx.closePath(); ctx.fill();
+});
+
+// 4. Gumroad thumbnail 600x600
+createAsset('gumroad-thumb-600', 600, 600, (ctx, w, h) => {
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, w, h);
+  grad.addColorStop(0, '#0c0b12'); grad.addColorStop(1, '#1a1940');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  // Subtle grid pattern
+  ctx.strokeStyle = 'rgba(99,102,241,0.08)'; ctx.lineWidth = 1;
+  for (let i = 0; i < w; i += 30) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
+  for (let i = 0; i < h; i += 30) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
+  // Owl
+  drawOwl(ctx, w/2, 210, 300);
+  // Title
+  ctx.fillStyle = TEXT;
+  ctx.font = 'bold 72px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Gang', w/2 - 68, 380);
+  ctx.fillStyle = AMBER;
+  ctx.fillText('Owl', w/2 + 72, 380);
+  // Subtitle
+  drawText(ctx, 'Desktop Edition', w/2, 430, 24, MUTED);
+  // Features
+  ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+  ctx.fillStyle = TEXT;
+  const features = ['No Ads', 'Offline Use', 'All Features'];
+  features.forEach((f, i) => {
+    const fx = w/2 + (i - 1) * 160;
+    ctx.fillStyle = ACCENT;
+    ctx.fillText('✓', fx - 40, 500);
+    ctx.fillStyle = TEXT;
+    ctx.fillText(f, fx + 10, 500);
+  });
+  // Price
+  drawText(ctx, '$11.99', w/2, 560, 36, AMBER);
+});
+
+// 5. Gumroad cover 1280x720
+createAsset('gumroad-cover-1280', 1280, 720, (ctx, w, h) => {
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, w, h);
+  grad.addColorStop(0, '#0c0b12'); grad.addColorStop(0.5, '#13121c'); grad.addColorStop(1, '#1a1940');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(99,102,241,0.06)'; ctx.lineWidth = 1;
+  for (let i = 0; i < w; i += 40) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
+  for (let i = 0; i < h; i += 40) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
+  // Left side: owl + branding
+  drawOwl(ctx, 280, 240, 320);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = TEXT; ctx.font = 'bold 64px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText('Gang', 220, 420);
+  ctx.fillStyle = AMBER;
+  ctx.fillText('Owl', 360, 420);
+  ctx.fillStyle = MUTED; ctx.font = '20px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText('Gang Sheet Builder', 280, 460);
+  // Right side: features
+  ctx.textAlign = 'left';
+  const features = [
+    ['Auto-Place & Fill', 'Pack designs automatically with smart algorithms'],
+    ['Multi-Sheet Distribution', 'Overflow items spill onto new sheets'],
+    ['Smart Guides', 'Snap to edges and centers of other items'],
+    ['PDF + PNG + JPEG Export', 'Production-ready output for any RIP'],
+    ['3 Themes + UI Scaling', 'Dark, Light, Midnight — adjustable size'],
+    ['No Ads · Offline · $11.99', 'One-time purchase, yours forever'],
+  ];
+  features.forEach((f, i) => {
+    const fy = 120 + i * 90;
+    ctx.fillStyle = ACCENT; ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText('→  ' + f[0], 560, fy);
+    ctx.fillStyle = MUTED; ctx.font = '16px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText(f[1], 590, fy + 28);
+  });
+  // Bottom accent line
+  ctx.fillStyle = ACCENT; ctx.fillRect(0, h - 4, w, 4);
+});
+
+</script>
+</body>
+</html>
