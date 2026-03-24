@@ -145,105 +145,49 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Die-cut: dilate alpha mask then trace the actual boundary (not convex hull)
-// The mask is padded so cut lines can extend beyond placement bounds
-function buildDieCutPath(img, w, h, offsetPx) {
+// Die-cut: use canvas compositing to build a smooth dilated outline
+// Returns a pre-rendered canvas instead of a Path2D for die-cut shape
+function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   if (!img.complete || !img.naturalWidth) return null;
-  const maxDim = 256;
-  const sc = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
-  const iw = Math.max(4, Math.round(img.naturalWidth * sc));
-  const ih = Math.max(4, Math.round(img.naturalHeight * sc));
-  const dilateR = Math.max(1, Math.round(offsetPx * iw / w));
-  // Pad the mask so dilation can extend beyond image bounds
-  const pad = dilateR + 2;
-  const mw = iw + pad * 2, mh = ih + pad * 2;
-  const cv = document.createElement("canvas"); cv.width = iw; cv.height = ih;
-  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0, iw, ih);
-  const d = ctx.getImageData(0, 0, iw, ih).data;
-  // Build padded alpha mask
-  const mask = new Uint8Array(mw * mh);
-  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
-    if (d[(y * iw + x) * 4 + 3] > 10) mask[(y + pad) * mw + (x + pad)] = 1;
-  }
-  // Dilate
-  const dilated = new Uint8Array(mw * mh);
-  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
-    if (mask[y * mw + x]) { dilated[y * mw + x] = 1; continue; }
-    outer: for (let dy = -dilateR; dy <= dilateR; dy++) for (let dx = -dilateR; dx <= dilateR; dx++) {
-      if (dx * dx + dy * dy > dilateR * dilateR) continue;
-      const nx = x + dx, ny = y + dy;
-      if (nx >= 0 && nx < mw && ny >= 0 && ny < mh && mask[ny * mw + nx]) { dilated[y * mw + x] = 1; break outer; }
+  // Work at a reasonable resolution
+  const res = Math.min(512, Math.max(w, h) * 4);
+  const sc = res / Math.max(w, h);
+  const cw = Math.round(w * sc), ch = Math.round(h * sc);
+  const oPx = Math.max(1, Math.round(offsetPx * sc));
+  const pad = oPx + 4;
+  const tw = cw + pad * 2, th = ch + pad * 2;
+  // Draw image onto temp canvas
+  const c1 = document.createElement("canvas"); c1.width = tw; c1.height = th;
+  const ctx1 = c1.getContext("2d");
+  ctx1.drawImage(img, pad, pad, cw, ch);
+  // Get alpha data and draw fat circles at every opaque pixel (sparse sampling)
+  const imgData = ctx1.getImageData(0, 0, tw, th).data;
+  const c2 = document.createElement("canvas"); c2.width = tw; c2.height = th;
+  const ctx2 = c2.getContext("2d");
+  ctx2.fillStyle = color || "#FF0000";
+  const step = Math.max(1, Math.round(oPx / 3)); // sample every few pixels for speed
+  for (let y = 0; y < th; y += step) for (let x = 0; x < tw; x += step) {
+    if (imgData[(y * tw + x) * 4 + 3] > 10) {
+      ctx2.beginPath();
+      ctx2.arc(x, y, oPx, 0, Math.PI * 2);
+      ctx2.fill();
     }
   }
-  // Moore neighborhood contour trace on dilated mask
-  const g = (x, y) => x >= 0 && x < mw && y >= 0 && y < mh ? dilated[y * mw + x] : 0;
-  let sx = -1, sy = -1;
-  for (let y = 0; y < mh && sx < 0; y++) for (let x = 0; x < mw && sx < 0; x++) {
-    if (g(x, y) && !g(x, y - 1)) { sx = x; sy = y; }
-  }
-  if (sx < 0) return null;
-  const dx8 = [1, 1, 0, -1, -1, -1, 0, 1];
-  const dy8 = [0, 1, 1, 1, 0, -1, -1, -1];
-  const contour = [[sx, sy]];
-  let cx2 = sx, cy2 = sy, dir = 7;
-  for (let iter = 0; iter < mw * mh * 2; iter++) {
-    let found = false;
-    const startDir = (dir + 5) % 8;
-    for (let i = 0; i < 8; i++) {
-      const d2 = (startDir + i) % 8;
-      const nx = cx2 + dx8[d2], ny = cy2 + dy8[d2];
-      if (g(nx, ny)) {
-        cx2 = nx; cy2 = ny; dir = d2;
-        if (cx2 === sx && cy2 === sy) { found = true; break; }
-        contour.push([cx2, cy2]);
-        found = true; break;
-      }
-    }
-    if (!found || (cx2 === sx && cy2 === sy)) break;
-  }
-  if (contour.length < 3) return null;
-  // Simplify
-  const simp = dpSimplify(contour, Math.max(0.5, 1.5 / sc));
-  // Convert padded mask coords to placement-local coords (centered, may exceed -w/2..w/2)
-  const path = new Path2D();
-  for (let i = 0; i < simp.length; i++) {
-    const px = ((simp[i][0] - pad) / iw - 0.5) * w;
-    const py = ((simp[i][1] - pad) / ih - 0.5) * h;
-    if (i === 0) path.moveTo(px, py); else path.lineTo(px, py);
-  }
-  path.closePath();
-  return path;
+  // Now cut out the original image area so we only have the outline
+  ctx2.globalCompositeOperation = "destination-out";
+  ctx2.drawImage(img, pad, pad, cw, ch);
+  ctx2.globalCompositeOperation = "source-over";
+  // Return the canvas and mapping info
+  return { canvas: c2, pad, cw, ch, tw, th };
 }
 
-function dpSimplify(pts, epsilon) {
-  if (pts.length <= 2) return pts;
-  let maxD = 0, idx = 0;
-  const [a, b] = [pts[0], pts[pts.length - 1]];
-  const lenSq = (b[0]-a[0])**2 + (b[1]-a[1])**2;
-  for (let i = 1; i < pts.length - 1; i++) {
-    let d;
-    if (lenSq === 0) d = Math.sqrt((pts[i][0]-a[0])**2 + (pts[i][1]-a[1])**2);
-    else d = Math.abs((b[1]-a[1])*pts[i][0] - (b[0]-a[0])*pts[i][1] + b[0]*a[1] - b[1]*a[0]) / Math.sqrt(lenSq);
-    if (d > maxD) { maxD = d; idx = i; }
-  }
-  if (maxD > epsilon) {
-    const l = dpSimplify(pts.slice(0, idx + 1), epsilon);
-    const r = dpSimplify(pts.slice(idx), epsilon);
-    return [...l.slice(0, -1), ...r];
-  }
-  return [a, b];
-}
+const dieCutCache = new Map();
 
 function getCutContour(src, shape, w, h, offsetPx, radiusPx) {
   const key = `${src.substring(0, 50)}_${shape}_${w.toFixed(1)}_${h.toFixed(1)}_${offsetPx.toFixed(1)}_${radiusPx.toFixed(1)}`;
   if (contourCache.has(key)) return contourCache.get(key);
   const img = cachedImg(src);
-  let path;
-  if (shape === "die-cut") {
-    path = buildDieCutPath(img, w, h, offsetPx);
-  } else {
-    path = buildShapePath(shape, img, w, h, offsetPx, radiusPx);
-  }
+  const path = buildShapePath(shape, img, w, h, offsetPx, radiusPx);
   contourCache.set(key, path);
   if (contourCache.size > 200) { const first = contourCache.keys().next().value; contourCache.delete(first); }
   return path;
@@ -1156,9 +1100,26 @@ export default function GangSheetBuilder() {
       }
       // Draw cut contour line (per-placement)
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
-        const osPx=spx(p.cutOffset||0),rPx=spx(p.cutRadius||0);
-        const contour=getCutContour(p.src,p.cutShape,pw,ph,osPx,rPx);
-        if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
+        if(p.cutShape==="die-cut"){
+          const osPx=spx(p.cutOffset||0);
+          const key=`dc_${p.src.substring(0,40)}_${pw.toFixed(0)}_${ph.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}`;
+          if(!dieCutCache.has(key)){
+            const r=buildDieCutCanvas(cachedImg(p.src),pw,ph,osPx,p.cutColor,p.cutWidth||1);
+            if(r)dieCutCache.set(key,r);
+            if(dieCutCache.size>100){dieCutCache.delete(dieCutCache.keys().next().value);}
+          }
+          const dc=dieCutCache.get(key);
+          if(dc){
+            // dc.canvas is tw×th, image occupies cw×ch starting at (pad,pad)
+            // Draw so that the image portion aligns with the placement (-pw/2,-ph/2,pw,ph)
+            const sx=pw/dc.cw, sy=ph/dc.ch;
+            ctx.drawImage(dc.canvas,-dc.pad*sx-pw/2,-dc.pad*sy-ph/2,dc.tw*sx,dc.th*sy);
+          }
+        } else {
+          const osPx=spx(p.cutOffset||0),rPx=spx(p.cutRadius||0);
+          const contour=getCutContour(p.src,p.cutShape,pw,ph,osPx,rPx);
+          if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
+        }
       }
       // Draw selection/hover border inside the rotation transform
       if(isSel){
@@ -1584,9 +1545,15 @@ export default function GangSheetBuilder() {
       if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
       ctx.drawImage(img,-pw2/2,-ph2/2,pw2,ph2);
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
-        const osPx=ipx(p.cutOffset||0,dpi),rPx=ipx(p.cutRadius||0,dpi);
-        const contour=getCutContour(p.src,p.cutShape,pw2,ph2,osPx,rPx);
-        if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
+        if(p.cutShape==="die-cut"){
+          const osPx=ipx(p.cutOffset||0,dpi);
+          const dc=buildDieCutCanvas(img,pw2,ph2,osPx,p.cutColor,p.cutWidth||1);
+          if(dc){const sx=pw2/dc.cw,sy=ph2/dc.ch;ctx.drawImage(dc.canvas,-dc.pad*sx-pw2/2,-dc.pad*sy-ph2/2,dc.tw*sx,dc.th*sy);}
+        } else {
+          const osPx=ipx(p.cutOffset||0,dpi),rPx=ipx(p.cutRadius||0,dpi);
+          const contour=getCutContour(p.src,p.cutShape,pw2,ph2,osPx,rPx);
+          if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
+        }
       }
       ctx.restore();
     }
