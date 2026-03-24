@@ -145,40 +145,39 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Die-cut: use canvas compositing to build a smooth dilated outline
-// Returns a pre-rendered canvas instead of a Path2D for die-cut shape
+// Die-cut: build a unified outline around all visible content using shadow trick
+// Creates a solid silhouette expanded by offset, then strokes it
 function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   if (!img.complete || !img.naturalWidth) return null;
-  // Work at a reasonable resolution
-  const res = Math.min(512, Math.max(w, h) * 4);
-  const sc = res / Math.max(w, h);
-  const cw = Math.round(w * sc), ch = Math.round(h * sc);
-  const oPx = Math.max(1, Math.round(offsetPx * sc));
-  const pad = oPx + 4;
-  const tw = cw + pad * 2, th = ch + pad * 2;
-  // Draw image onto temp canvas
+  const oPx = Math.max(1, offsetPx);
+  const lw = Math.max(0.5, lineWidth);
+  const pad = Math.ceil(oPx + lw + 2);
+  const tw = Math.ceil(w + pad * 2), th = Math.ceil(h + pad * 2);
+  // Step 1: Create solid silhouette of the image (all opaque pixels become solid color)
   const c1 = document.createElement("canvas"); c1.width = tw; c1.height = th;
   const ctx1 = c1.getContext("2d");
-  ctx1.drawImage(img, pad, pad, cw, ch);
-  // Get alpha data and draw fat circles at every opaque pixel (sparse sampling)
-  const imgData = ctx1.getImageData(0, 0, tw, th).data;
+  // Draw original image
+  ctx1.drawImage(img, pad, pad, w, h);
+  // Replace all visible pixels with solid color
+  ctx1.globalCompositeOperation = "source-in";
+  ctx1.fillStyle = color || "#FF0000";
+  ctx1.fillRect(0, 0, tw, th);
+  ctx1.globalCompositeOperation = "source-over";
+  // Step 2: Draw the silhouette with shadow to create expanded shape
   const c2 = document.createElement("canvas"); c2.width = tw; c2.height = th;
   const ctx2 = c2.getContext("2d");
-  ctx2.fillStyle = color || "#FF0000";
-  const step = Math.max(1, Math.round(oPx / 3)); // sample every few pixels for speed
-  for (let y = 0; y < th; y += step) for (let x = 0; x < tw; x += step) {
-    if (imgData[(y * tw + x) * 4 + 3] > 10) {
-      ctx2.beginPath();
-      ctx2.arc(x, y, oPx, 0, Math.PI * 2);
-      ctx2.fill();
-    }
-  }
-  // Now cut out the original image area so we only have the outline
+  ctx2.shadowColor = color || "#FF0000";
+  ctx2.shadowBlur = oPx;
+  ctx2.shadowOffsetX = 0;
+  ctx2.shadowOffsetY = 0;
+  // Draw multiple times to make shadow solid (shadowBlur is gaussian, needs reinforcement)
+  for (let i = 0; i < 6; i++) ctx2.drawImage(c1, 0, 0);
+  ctx2.shadowColor = "transparent";
+  // Step 3: Cut out the original image shape — leaves only the outline ring
   ctx2.globalCompositeOperation = "destination-out";
-  ctx2.drawImage(img, pad, pad, cw, ch);
+  ctx2.drawImage(img, pad, pad, w, h);
   ctx2.globalCompositeOperation = "source-over";
-  // Return the canvas and mapping info
-  return { canvas: c2, pad, cw, ch, tw, th };
+  return { canvas: c2, pad, cw: Math.ceil(w), ch: Math.ceil(h), tw, th };
 }
 
 const dieCutCache = new Map();
