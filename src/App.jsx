@@ -145,7 +145,7 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Convex hull for die-cut — wraps ALL visible content with a single smooth outline
+// Convex hull for die-cut — wraps ALL visible content with uniform offset
 function buildDieCutPath(img, w, h, offsetPx) {
   if (!img.complete || !img.naturalWidth) return null;
   const maxDim = 256;
@@ -155,28 +155,41 @@ function buildDieCutPath(img, w, h, offsetPx) {
   const cv = document.createElement("canvas"); cv.width = sw; cv.height = sh;
   const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0, sw, sh);
   const d = ctx.getImageData(0, 0, sw, sh).data;
-  // Collect all visible edge pixels
+  // Build binary alpha mask
+  const mask = new Uint8Array(sw * sh);
+  for (let i = 0; i < sw * sh; i++) if (d[i * 4 + 3] > 10) mask[i] = 1;
+  // Dilate mask by offset FIRST (uniform expansion around all content)
+  const dilateR = Math.max(0, Math.round(offsetPx * sw / w));
+  let src = mask;
+  if (dilateR > 0) {
+    const dst = new Uint8Array(sw * sh);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      if (src[y * sw + x]) { dst[y * sw + x] = 1; continue; }
+      outer: for (let dy = -dilateR; dy <= dilateR; dy++) for (let dx = -dilateR; dx <= dilateR; dx++) {
+        if (dx * dx + dy * dy > dilateR * dilateR) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < sw && ny >= 0 && ny < sh && src[ny * sw + nx]) { dst[y * sw + x] = 1; break outer; }
+      }
+    }
+    src = dst;
+  }
+  // Collect boundary pixels of the dilated mask
   const edgePts = [];
   for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-    if (d[(y * sw + x) * 4 + 3] <= 10) continue;
-    // Check if this is a boundary pixel (has a transparent neighbor)
-    const hasEmpty = (x === 0 || y === 0 || x === sw-1 || y === sh-1 ||
-      d[((y-1)*sw+x)*4+3] <= 10 || d[((y+1)*sw+x)*4+3] <= 10 ||
-      d[(y*sw+x-1)*4+3] <= 10 || d[(y*sw+x+1)*4+3] <= 10);
-    if (hasEmpty) edgePts.push([x, y]);
+    if (!src[y * sw + x]) continue;
+    if (x === 0 || y === 0 || x === sw-1 || y === sh-1 ||
+      !src[(y-1)*sw+x] || !src[(y+1)*sw+x] || !src[y*sw+x-1] || !src[y*sw+x+1])
+      edgePts.push([x, y]);
   }
   if (edgePts.length < 3) return null;
-  // Convex hull (Graham scan)
+  // Convex hull of dilated boundary
   const hull = convexHull(edgePts);
   if (hull.length < 3) return null;
-  // Offset hull outward
-  const oMask = offsetPx * sw / w; // offset in mask pixels
-  const expanded = offsetPolygon(hull, oMask);
-  // Convert to placement-local coords and build path
+  // Convert to placement-local coords
   const path = new Path2D();
-  for (let i = 0; i < expanded.length; i++) {
-    const px = (expanded[i][0] / sw - 0.5) * w;
-    const py = (expanded[i][1] / sh - 0.5) * h;
+  for (let i = 0; i < hull.length; i++) {
+    const px = (hull[i][0] / sw - 0.5) * w;
+    const py = (hull[i][1] / sh - 0.5) * h;
     if (i === 0) path.moveTo(px, py); else path.lineTo(px, py);
   }
   path.closePath();
@@ -205,26 +218,6 @@ function convexHull(points) {
     stack.push(p);
   }
   return stack;
-}
-
-function offsetPolygon(pts, dist) {
-  if (dist <= 0) return pts;
-  const n = pts.length;
-  const result = [];
-  for (let i = 0; i < n; i++) {
-    const prev = pts[(i - 1 + n) % n], curr = pts[i], next = pts[(i + 1) % n];
-    // Compute outward normal bisector
-    const dx1 = curr[0] - prev[0], dy1 = curr[1] - prev[1];
-    const dx2 = next[0] - curr[0], dy2 = next[1] - curr[1];
-    const len1 = Math.hypot(dx1, dy1) || 1, len2 = Math.hypot(dx2, dy2) || 1;
-    // Outward normals (for clockwise polygon: rotate right)
-    const nx1 = dy1 / len1, ny1 = -dx1 / len1;
-    const nx2 = dy2 / len2, ny2 = -dx2 / len2;
-    const nx = nx1 + nx2, ny = ny1 + ny2;
-    const nl = Math.hypot(nx, ny) || 1;
-    result.push([curr[0] + nx / nl * dist, curr[1] + ny / nl * dist]);
-  }
-  return result;
 }
 
 function getCutContour(src, shape, w, h, offsetPx, radiusPx) {
