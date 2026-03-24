@@ -145,41 +145,95 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Die-cut: draw colored silhouette in a circle pattern to create uniform outline
-// Simple and bulletproof: stamp the solid-color silhouette at N positions
-// around a circle of radius=offset, then erase the original image shape
+// Die-cut: morphological close (dilate→erode) to unify disconnected elements,
+// then circular stamp for uniform offset outline.
+// This bridges gaps between scattered elements into ONE sticker shape.
 function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   if (!img.complete || !img.naturalWidth) return null;
   const offset = Math.max(1, offsetPx);
-  const lw = Math.max(0.5, lineWidth);
-  const pad = Math.ceil(offset + lw + 2);
+  const pad = Math.ceil(offset + 4);
   const tw = Math.ceil(w + pad * 2), th = Math.ceil(h + pad * 2);
-  // Step 1: Create a solid-color silhouette of the image
-  const silhouette = document.createElement("canvas"); silhouette.width = Math.ceil(w); silhouette.height = Math.ceil(h);
-  const sCtx = silhouette.getContext("2d");
-  sCtx.drawImage(img, 0, 0, w, h);
-  sCtx.globalCompositeOperation = "source-in";
-  sCtx.fillStyle = color || "#FF0000";
-  sCtx.fillRect(0, 0, w, h);
-  sCtx.globalCompositeOperation = "source-over";
-  // Step 2: Stamp the silhouette in a circle around center to create expanded shape
+  const iw = Math.ceil(w), ih = Math.ceil(h);
+
+  // Step 1: Get alpha mask from image
+  const c0 = document.createElement("canvas"); c0.width = iw; c0.height = ih;
+  c0.getContext("2d").drawImage(img, 0, 0, iw, ih);
+  const d = c0.getContext("2d").getImageData(0, 0, iw, ih).data;
+  const mask = new Uint8Array(iw * ih);
+  for (let i = 0; i < iw * ih; i++) if (d[i * 4 + 3] > 10) mask[i] = 1;
+
+  // Step 2: Morphological closing — dilate then erode by a "bridge radius"
+  // The bridge radius should be large enough to connect nearby elements
+  // Use offset * 3 as bridge radius (connects elements within 3x offset distance)
+  const bridgeR = Math.max(3, Math.round(offset * 3));
+
+  // Dilate
+  const dilated = new Uint8Array(iw * ih);
+  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
+    if (mask[y * iw + x]) { dilated[y * iw + x] = 1; continue; }
+    const rSq = bridgeR * bridgeR;
+    for (let dy = -bridgeR; dy <= bridgeR; dy += 2) {
+      for (let dx = -bridgeR; dx <= bridgeR; dx += 2) {
+        if (dx * dx + dy * dy > rSq) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < iw && ny >= 0 && ny < ih && mask[ny * iw + nx]) {
+          dilated[y * iw + x] = 1; dy = bridgeR + 1; break;
+        }
+      }
+    }
+  }
+
+  // Erode back by same radius (shrink the dilated shape back down)
+  const closed = new Uint8Array(iw * ih);
+  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
+    if (!dilated[y * iw + x]) continue;
+    // A pixel survives erosion only if ALL pixels within bridgeR are also set
+    // Approximation: check if any pixel within bridgeR is NOT set
+    let allSet = true;
+    const rSq = bridgeR * bridgeR;
+    for (let dy = -bridgeR; dy <= bridgeR && allSet; dy += 2) {
+      for (let dx = -bridgeR; dx <= bridgeR && allSet; dx += 2) {
+        if (dx * dx + dy * dy > rSq) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= iw || ny < 0 || ny >= ih || !dilated[ny * iw + nx]) allSet = false;
+      }
+    }
+    if (allSet) closed[y * iw + x] = 1;
+  }
+
+  // Step 3: Create silhouette from the closed (unified) mask
+  const silCanvas = document.createElement("canvas"); silCanvas.width = iw; silCanvas.height = ih;
+  const silCtx = silCanvas.getContext("2d");
+  const silData = silCtx.createImageData(iw, ih);
+  const cr = parseInt((color || "#FF0000").slice(1, 3), 16);
+  const cg = parseInt((color || "#FF0000").slice(3, 5), 16);
+  const cb = parseInt((color || "#FF0000").slice(5, 7), 16);
+  for (let i = 0; i < iw * ih; i++) {
+    if (closed[i]) {
+      silData.data[i * 4] = cr;
+      silData.data[i * 4 + 1] = cg;
+      silData.data[i * 4 + 2] = cb;
+      silData.data[i * 4 + 3] = 255;
+    }
+  }
+  silCtx.putImageData(silData, 0, 0);
+
+  // Step 4: Circular stamp of the unified silhouette to create offset outline
   const result = document.createElement("canvas"); result.width = tw; result.height = th;
   const rCtx = result.getContext("2d");
-  // Number of stamps — more = smoother circle. Use circumference / 2 for good coverage
-  const steps = Math.max(16, Math.ceil(Math.PI * 2 * offset / 1.5));
+  const steps = Math.max(24, Math.ceil(Math.PI * 2 * offset / 1.2));
   for (let i = 0; i < steps; i++) {
     const angle = (i / steps) * Math.PI * 2;
-    const dx = Math.cos(angle) * offset;
-    const dy = Math.sin(angle) * offset;
-    rCtx.drawImage(silhouette, pad + dx, pad + dy);
+    rCtx.drawImage(silCanvas, pad + Math.cos(angle) * offset, pad + Math.sin(angle) * offset);
   }
-  // Also stamp at center to fill any gaps
-  rCtx.drawImage(silhouette, pad, pad);
-  // Step 3: Erase the original image shape — leaves only the outline ring
+  rCtx.drawImage(silCanvas, pad, pad); // fill center
+
+  // Step 5: Erase the unified closed shape — leaves only the outline ring
   rCtx.globalCompositeOperation = "destination-out";
-  rCtx.drawImage(img, pad, pad, w, h);
+  rCtx.putImageData(silData, pad, pad); // erase the closed shape, not original image
   rCtx.globalCompositeOperation = "source-over";
-  return { canvas: result, pad, cw: Math.ceil(w), ch: Math.ceil(h), tw, th };
+
+  return { canvas: result, pad, cw: iw, ch: ih, tw, th };
 }
 
 const dieCutCache = new Map();
