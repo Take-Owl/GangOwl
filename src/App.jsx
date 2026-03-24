@@ -145,107 +145,41 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Die-cut: marching squares contour trace + thick stroke + redraw image on top
-// Industry-standard approach: trace alpha contour, stroke it, redraw original
+// Die-cut: draw colored silhouette in a circle pattern to create uniform outline
+// Simple and bulletproof: stamp the solid-color silhouette at N positions
+// around a circle of radius=offset, then erase the original image shape
 function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   if (!img.complete || !img.naturalWidth) return null;
-  const pad = Math.ceil(offsetPx + lineWidth + 4);
+  const offset = Math.max(1, offsetPx);
+  const lw = Math.max(0.5, lineWidth);
+  const pad = Math.ceil(offset + lw + 2);
   const tw = Math.ceil(w + pad * 2), th = Math.ceil(h + pad * 2);
-  // Step 1: Draw image and get alpha data
-  const c1 = document.createElement("canvas"); c1.width = tw; c1.height = th;
-  const ctx1 = c1.getContext("2d");
-  ctx1.drawImage(img, pad, pad, w, h);
-  const imgData = ctx1.getImageData(0, 0, tw, th).data;
-  // Step 2: Marching squares on the alpha channel to trace all contours
-  const threshold = 10;
-  const isOpaque = (x, y) => x >= 0 && x < tw && y >= 0 && y < th && imgData[(y * tw + x) * 4 + 3] > threshold;
-  // Build a grid of 0/1 values for marching squares (sample every pixel)
-  const contours = marchingSquaresAll(tw, th, isOpaque);
-  if (!contours.length) return null;
-  // Step 3: Create output canvas
-  const c2 = document.createElement("canvas"); c2.width = tw; c2.height = th;
-  const ctx2 = c2.getContext("2d");
-  // Step 4: Stroke all contours with offset*2 width (half inside, half outside = offset outside)
-  ctx2.strokeStyle = color || "#FF0000";
-  ctx2.lineWidth = offsetPx * 2 + (lineWidth || 1);
-  ctx2.lineJoin = "round";
-  ctx2.lineCap = "round";
-  for (const pts of contours) {
-    if (pts.length < 3) continue;
-    ctx2.beginPath();
-    ctx2.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i][0], pts[i][1]);
-    ctx2.closePath();
-    ctx2.stroke();
+  // Step 1: Create a solid-color silhouette of the image
+  const silhouette = document.createElement("canvas"); silhouette.width = Math.ceil(w); silhouette.height = Math.ceil(h);
+  const sCtx = silhouette.getContext("2d");
+  sCtx.drawImage(img, 0, 0, w, h);
+  sCtx.globalCompositeOperation = "source-in";
+  sCtx.fillStyle = color || "#FF0000";
+  sCtx.fillRect(0, 0, w, h);
+  sCtx.globalCompositeOperation = "source-over";
+  // Step 2: Stamp the silhouette in a circle around center to create expanded shape
+  const result = document.createElement("canvas"); result.width = tw; result.height = th;
+  const rCtx = result.getContext("2d");
+  // Number of stamps — more = smoother circle. Use circumference / 2 for good coverage
+  const steps = Math.max(16, Math.ceil(Math.PI * 2 * offset / 1.5));
+  for (let i = 0; i < steps; i++) {
+    const angle = (i / steps) * Math.PI * 2;
+    const dx = Math.cos(angle) * offset;
+    const dy = Math.sin(angle) * offset;
+    rCtx.drawImage(silhouette, pad + dx, pad + dy);
   }
-  // Step 5: Redraw original image on top to cover the inner half of the stroke
-  ctx2.drawImage(img, pad, pad, w, h);
-  // Step 6: Clear the original image pixels — keep only the outline ring
-  // Use destination-out to punch the image shape, then draw outline only
-  // Actually, we want: outline ring + NO image (just the cut line)
-  // So: draw the outline, then erase the image area
-  ctx2.globalCompositeOperation = "destination-out";
-  ctx2.drawImage(img, pad, pad, w, h);
-  ctx2.globalCompositeOperation = "source-over";
-  return { canvas: c2, pad, cw: Math.ceil(w), ch: Math.ceil(h), tw, th };
-}
-
-// Marching squares: trace all contours in the alpha field
-function marchingSquaresAll(w, h, isOpaque) {
-  const visited = new Set();
-  const contours = [];
-  // Scan for contour starting points
-  for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) {
-    const tl = isOpaque(x, y) ? 1 : 0;
-    const tr = isOpaque(x+1, y) ? 1 : 0;
-    const bl = isOpaque(x, y+1) ? 1 : 0;
-    const br = isOpaque(x+1, y+1) ? 1 : 0;
-    const config = (tl << 3) | (tr << 2) | (br << 1) | bl;
-    if (config === 0 || config === 15) continue; // all same
-    const key = `${x},${y}`;
-    if (visited.has(key)) continue;
-    // Trace this contour
-    const pts = traceContour(w, h, isOpaque, x, y, visited);
-    if (pts && pts.length >= 3) contours.push(pts);
-  }
-  return contours;
-}
-
-function traceContour(w, h, isOpaque, startX, startY, visited) {
-  const pts = [];
-  let x = startX, y = startY;
-  let prevDir = -1;
-  for (let iter = 0; iter < w * h; iter++) {
-    const key = `${x},${y}`;
-    if (iter > 0 && x === startX && y === startY) break; // closed loop
-    visited.add(key);
-    const tl = (x >= 0 && y >= 0) ? (isOpaque(x, y) ? 1 : 0) : 0;
-    const tr = (x+1 < w && y >= 0) ? (isOpaque(x+1, y) ? 1 : 0) : 0;
-    const bl = (x >= 0 && y+1 < h) ? (isOpaque(x, y+1) ? 1 : 0) : 0;
-    const br = (x+1 < w && y+1 < h) ? (isOpaque(x+1, y+1) ? 1 : 0) : 0;
-    const config = (tl << 3) | (tr << 2) | (br << 1) | bl;
-    if (config === 0 || config === 15) break;
-    // Interpolated edge point (center of cell)
-    pts.push([x + 0.5, y + 0.5]);
-    // Direction: 0=right, 1=down, 2=left, 3=up
-    let dir;
-    switch (config) {
-      case 1: case 5: case 13: dir = 3; break; // up
-      case 2: case 3: case 7: dir = 0; break; // right
-      case 4: case 12: case 14: dir = 1; break; // down
-      case 8: case 10: case 11: dir = 2; break; // left
-      case 6: dir = prevDir === 3 ? 0 : 2; break; // ambiguous
-      case 9: dir = prevDir === 0 ? 3 : 1; break; // ambiguous
-      default: dir = 0;
-    }
-    prevDir = dir;
-    if (dir === 0) x++;
-    else if (dir === 1) y++;
-    else if (dir === 2) x--;
-    else y--;
-    if (x < -1 || x >= w || y < -1 || y >= h) break;
-  }
-  return pts;
+  // Also stamp at center to fill any gaps
+  rCtx.drawImage(silhouette, pad, pad);
+  // Step 3: Erase the original image shape — leaves only the outline ring
+  rCtx.globalCompositeOperation = "destination-out";
+  rCtx.drawImage(img, pad, pad, w, h);
+  rCtx.globalCompositeOperation = "source-over";
+  return { canvas: result, pad, cw: Math.ceil(w), ch: Math.ceil(h), tw, th };
 }
 
 const dieCutCache = new Map();
