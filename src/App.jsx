@@ -96,125 +96,146 @@ function nativeRes(nW,nH,pW,pH,dpi) {
 // ─── Cut contour generation ──────────────────────────────────────────────────
 const contourCache = new Map();
 
-function buildContourPath(shape, w, h, offsetPx, radiusPx) {
-  const o = offsetPx;
-  const path = new Path2D();
-  if (shape === "rectangle") {
-    path.rect(-w/2 - o, -h/2 - o, w + o*2, h + o*2);
-  } else if (shape === "rounded-rect") {
-    const r = Math.max(0, Math.min(radiusPx, (w + o*2)/2, (h + o*2)/2));
-    const x = -w/2 - o, y = -h/2 - o, rw = w + o*2, rh = h + o*2;
-    path.moveTo(x + r, y);
-    path.lineTo(x + rw - r, y); path.arcTo(x + rw, y, x + rw, y + r, r);
-    path.lineTo(x + rw, y + rh - r); path.arcTo(x + rw, y + rh, x + rw - r, y + rh, r);
-    path.lineTo(x + r, y + rh); path.arcTo(x, y + rh, x, y + rh - r, r);
-    path.lineTo(x, y + r); path.arcTo(x, y, x + r, y, r);
-    path.closePath();
-  } else if (shape === "circle") {
-    path.ellipse(0, 0, w/2 + o, h/2 + o, 0, 0, Math.PI * 2);
-  }
-  return path;
-}
-
-function buildDieCutPath(img, w, h, offsetPx) {
-  if (!img.complete || !img.naturalWidth) return null;
-  // Downsample for performance
+// Get the bounding box of visible (non-transparent) content in an image, in placement-local coords
+function getContentBounds(img, w, h) {
+  if (!img.complete || !img.naturalWidth) return { cx: 0, cy: 0, cw: w, ch: h };
   const maxDim = 256;
   const sc = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
   const sw = Math.max(4, Math.round(img.naturalWidth * sc));
   const sh = Math.max(4, Math.round(img.naturalHeight * sc));
   const cv = document.createElement("canvas"); cv.width = sw; cv.height = sh;
-  const cx = cv.getContext("2d"); cx.drawImage(img, 0, 0, sw, sh);
-  const d = cx.getImageData(0, 0, sw, sh).data;
-  // Binary alpha mask
-  const mask = new Uint8Array(sw * sh);
-  for (let i = 0; i < sw * sh; i++) if (d[i * 4 + 3] > 10) mask[i] = 1;
-  // Dilate by offset pixels (converted to mask space)
-  const dilateR = Math.max(0, Math.round(offsetPx * sw / w));
-  let src = mask;
-  if (dilateR > 0) {
-    const dst = new Uint8Array(sw * sh);
-    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-      if (src[y * sw + x]) { dst[y * sw + x] = 1; continue; }
-      outer: for (let dy = -dilateR; dy <= dilateR; dy++) for (let dx = -dilateR; dx <= dilateR; dx++) {
-        if (dx * dx + dy * dy > dilateR * dilateR) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && nx < sw && ny >= 0 && ny < sh && src[ny * sw + nx]) { dst[y * sw + x] = 1; break outer; }
-      }
+  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0, sw, sh);
+  const d = ctx.getImageData(0, 0, sw, sh).data;
+  let top = sh, left = sw, bottom = 0, right = 0;
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    if (d[(y * sw + x) * 4 + 3] > 10) {
+      if (y < top) top = y; if (y > bottom) bottom = y;
+      if (x < left) left = x; if (x > right) right = x;
     }
-    src = dst;
   }
-  // Moore neighborhood contour tracing
-  const g = (x, y) => x >= 0 && x < sw && y >= 0 && y < sh ? src[y * sw + x] : 0;
-  // Find starting pixel (first solid pixel with empty neighbor above)
-  let sx = -1, sy = -1;
-  for (let y = 0; y < sh && sx < 0; y++) for (let x = 0; x < sw && sx < 0; x++) {
-    if (g(x, y) && !g(x, y - 1)) { sx = x; sy = y; }
-  }
-  if (sx < 0) return null;
-  // 8-connected neighbor directions: right, down-right, down, down-left, left, up-left, up, up-right
-  const dx8 = [1, 1, 0, -1, -1, -1, 0, 1];
-  const dy8 = [0, 1, 1, 1, 0, -1, -1, -1];
-  const contour = [[sx, sy]];
-  let cx2 = sx, cy2 = sy, dir = 7; // start looking up-right (came from above)
-  for (let iter = 0; iter < sw * sh * 2; iter++) {
-    let found = false;
-    // Search neighbors starting from (dir+5)%8 (backtrack direction + 1)
-    const startDir = (dir + 5) % 8;
-    for (let i = 0; i < 8; i++) {
-      const d2 = (startDir + i) % 8;
-      const nx = cx2 + dx8[d2], ny = cy2 + dy8[d2];
-      if (g(nx, ny)) {
-        cx2 = nx; cy2 = ny; dir = d2;
-        if (cx2 === sx && cy2 === sy) { found = true; break; } // back to start
-        contour.push([cx2, cy2]);
-        found = true; break;
-      }
-    }
-    if (!found || (cx2 === sx && cy2 === sy)) break;
-  }
-  if (contour.length < 3) return null;
-  // Simplify with Douglas-Peucker
-  const eps = Math.max(0.5, 1.5 / sc);
-  const simp = dpSimplify(contour, eps);
-  // Convert to placement-local coords (centered)
+  if (bottom < top) return { cx: 0, cy: 0, cw: w, ch: h };
+  return {
+    cx: ((left + right) / 2 / sw - 0.5) * w,
+    cy: ((top + bottom) / 2 / sh - 0.5) * h,
+    cw: ((right - left + 1) / sw) * w,
+    ch: ((bottom - top + 1) / sh) * h,
+  };
+}
+
+function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
+  const bounds = getContentBounds(img, w, h);
+  const o = offsetPx;
   const path = new Path2D();
-  for (let i = 0; i < simp.length; i++) {
-    const px = (simp[i][0] / sw - 0.5) * w;
-    const py = (simp[i][1] / sh - 0.5) * h;
+  if (shape === "rectangle") {
+    path.rect(bounds.cx - bounds.cw/2 - o, bounds.cy - bounds.ch/2 - o, bounds.cw + o*2, bounds.ch + o*2);
+  } else if (shape === "rounded-rect") {
+    const bw = bounds.cw + o*2, bh = bounds.ch + o*2;
+    const r = Math.max(0, Math.min(radiusPx, bw/2, bh/2));
+    const x = bounds.cx - bounds.cw/2 - o, y = bounds.cy - bounds.ch/2 - o;
+    path.moveTo(x + r, y);
+    path.lineTo(x + bw - r, y); path.arcTo(x + bw, y, x + bw, y + r, r);
+    path.lineTo(x + bw, y + bh - r); path.arcTo(x + bw, y + bh, x + bw - r, y + bh, r);
+    path.lineTo(x + r, y + bh); path.arcTo(x, y + bh, x, y + bh - r, r);
+    path.lineTo(x, y + r); path.arcTo(x, y, x + r, y, r);
+    path.closePath();
+  } else if (shape === "circle") {
+    const rx = bounds.cw/2 + o, ry = bounds.ch/2 + o;
+    path.ellipse(bounds.cx, bounds.cy, rx, ry, 0, 0, Math.PI * 2);
+  }
+  return path;
+}
+
+// Convex hull for die-cut — wraps ALL visible content with a single smooth outline
+function buildDieCutPath(img, w, h, offsetPx) {
+  if (!img.complete || !img.naturalWidth) return null;
+  const maxDim = 256;
+  const sc = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+  const sw = Math.max(4, Math.round(img.naturalWidth * sc));
+  const sh = Math.max(4, Math.round(img.naturalHeight * sc));
+  const cv = document.createElement("canvas"); cv.width = sw; cv.height = sh;
+  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0, sw, sh);
+  const d = ctx.getImageData(0, 0, sw, sh).data;
+  // Collect all visible edge pixels
+  const edgePts = [];
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    if (d[(y * sw + x) * 4 + 3] <= 10) continue;
+    // Check if this is a boundary pixel (has a transparent neighbor)
+    const hasEmpty = (x === 0 || y === 0 || x === sw-1 || y === sh-1 ||
+      d[((y-1)*sw+x)*4+3] <= 10 || d[((y+1)*sw+x)*4+3] <= 10 ||
+      d[(y*sw+x-1)*4+3] <= 10 || d[(y*sw+x+1)*4+3] <= 10);
+    if (hasEmpty) edgePts.push([x, y]);
+  }
+  if (edgePts.length < 3) return null;
+  // Convex hull (Graham scan)
+  const hull = convexHull(edgePts);
+  if (hull.length < 3) return null;
+  // Offset hull outward
+  const oMask = offsetPx * sw / w; // offset in mask pixels
+  const expanded = offsetPolygon(hull, oMask);
+  // Convert to placement-local coords and build path
+  const path = new Path2D();
+  for (let i = 0; i < expanded.length; i++) {
+    const px = (expanded[i][0] / sw - 0.5) * w;
+    const py = (expanded[i][1] / sh - 0.5) * h;
     if (i === 0) path.moveTo(px, py); else path.lineTo(px, py);
   }
   path.closePath();
   return path;
 }
 
-function dpSimplify(pts, epsilon) {
-  if (pts.length <= 2) return pts;
-  let maxD = 0, idx = 0;
-  const [a, b] = [pts[0], pts[pts.length - 1]];
-  const lenSq = (b[0]-a[0])**2 + (b[1]-a[1])**2;
-  for (let i = 1; i < pts.length - 1; i++) {
-    let d;
-    if (lenSq === 0) d = Math.sqrt((pts[i][0]-a[0])**2 + (pts[i][1]-a[1])**2);
-    else d = Math.abs((b[1]-a[1])*pts[i][0] - (b[0]-a[0])*pts[i][1] + b[0]*a[1] - b[1]*a[0]) / Math.sqrt(lenSq);
-    if (d > maxD) { maxD = d; idx = i; }
+function convexHull(points) {
+  if (points.length < 3) return points;
+  // Find lowest point (then leftmost)
+  let start = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i][1] > points[start][1] || (points[i][1] === points[start][1] && points[i][0] < points[start][0])) start = i;
   }
-  if (maxD > epsilon) {
-    const l = dpSimplify(pts.slice(0, idx + 1), epsilon);
-    const r = dpSimplify(pts.slice(idx), epsilon);
-    return [...l.slice(0, -1), ...r];
+  const pivot = points[start];
+  const sorted = points.filter((_, i) => i !== start).sort((a, b) => {
+    const angA = Math.atan2(a[1] - pivot[1], a[0] - pivot[0]);
+    const angB = Math.atan2(b[1] - pivot[1], b[0] - pivot[0]);
+    return angA - angB || (Math.hypot(a[0]-pivot[0],a[1]-pivot[1]) - Math.hypot(b[0]-pivot[0],b[1]-pivot[1]));
+  });
+  const stack = [pivot];
+  for (const p of sorted) {
+    while (stack.length > 1) {
+      const a = stack[stack.length - 2], b = stack[stack.length - 1];
+      if ((b[0]-a[0])*(p[1]-a[1]) - (b[1]-a[1])*(p[0]-a[0]) <= 0) stack.pop(); else break;
+    }
+    stack.push(p);
   }
-  return [a, b];
+  return stack;
+}
+
+function offsetPolygon(pts, dist) {
+  if (dist <= 0) return pts;
+  const n = pts.length;
+  const result = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n], curr = pts[i], next = pts[(i + 1) % n];
+    // Compute outward normal bisector
+    const dx1 = curr[0] - prev[0], dy1 = curr[1] - prev[1];
+    const dx2 = next[0] - curr[0], dy2 = next[1] - curr[1];
+    const len1 = Math.hypot(dx1, dy1) || 1, len2 = Math.hypot(dx2, dy2) || 1;
+    // Outward normals (for clockwise polygon: rotate right)
+    const nx1 = dy1 / len1, ny1 = -dx1 / len1;
+    const nx2 = dy2 / len2, ny2 = -dx2 / len2;
+    const nx = nx1 + nx2, ny = ny1 + ny2;
+    const nl = Math.hypot(nx, ny) || 1;
+    result.push([curr[0] + nx / nl * dist, curr[1] + ny / nl * dist]);
+  }
+  return result;
 }
 
 function getCutContour(src, shape, w, h, offsetPx, radiusPx) {
   const key = `${src.substring(0, 50)}_${shape}_${w.toFixed(1)}_${h.toFixed(1)}_${offsetPx.toFixed(1)}_${radiusPx.toFixed(1)}`;
   if (contourCache.has(key)) return contourCache.get(key);
+  const img = cachedImg(src);
   let path;
   if (shape === "die-cut") {
-    path = buildDieCutPath(cachedImg(src), w, h, offsetPx);
+    path = buildDieCutPath(img, w, h, offsetPx);
   } else {
-    path = buildContourPath(shape, w, h, offsetPx, radiusPx);
+    path = buildShapePath(shape, img, w, h, offsetPx, radiusPx);
   }
   contourCache.set(key, path);
   if (contourCache.size > 200) { const first = contourCache.keys().next().value; contourCache.delete(first); }
