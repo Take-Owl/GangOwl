@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import AdSlot, { ExportAd } from "./AdSlot";
-import { isWeb } from "./edition";
+import { isWeb, saveFileWithDialog } from "./edition";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SCREEN_DPI = 96;
@@ -463,15 +463,21 @@ export default function GangSheetBuilder() {
   const snap = v => (!snapToGrid||!snapSize) ? v : Math.round(v/snapSize)*snapSize;
 
   // ── Tab management ──
+  const uniqueLabel=(base,existing=sheets)=>{
+    const names=new Set(existing.map(s=>s.label));
+    if(!names.has(base)) return base;
+    for(let i=2;i<999;i++){const n=`${base} ${i}`;if(!names.has(n))return n;}
+    return `${base} ${Date.now()}`;
+  };
   const addSheet = ()=>{
-    const ns=makeSheet({label:`Sheet ${sheets.length+1}`,sheetW:active.sheetW,sheetH:active.sheetH,sheetDPI:active.sheetDPI,margin:active.margin,gap:active.gap});
+    const ns=makeSheet({label:uniqueLabel(`Sheet ${sheets.length+1}`),sheetW:active.sheetW,sheetH:active.sheetH,sheetDPI:active.sheetDPI,margin:active.margin,gap:active.gap});
     setSheets(prev=>[...prev,ns]); setActiveId(ns.id); setSelected(null); setLeftTab("sheet");
     if(isMobile) setDrawer(null);
   };
   const duplicateSheet=(sid,e)=>{
     e?.stopPropagation();
     const src=sheets.find(s=>s.id===sid); if(!src) return;
-    const ns={...JSON.parse(JSON.stringify(src)),id:uid(),label:src.label+" (copy)"};
+    const ns={...JSON.parse(JSON.stringify(src)),id:uid(),label:uniqueLabel(src.label+" (copy)")};
     // Remap group IDs and update placement references
     const gidMap={};
     ns.groups=ns.groups.map(g=>{const nid=uid();gidMap[g.id]=nid;return{...g,id:nid};});
@@ -729,7 +735,7 @@ export default function GangSheetBuilder() {
       try{
         const data=JSON.parse(reader.result);
         const importSheet=(src)=>{
-          const ns=makeSheet({...src,label:src.label||file.name.replace(/\.[^.]+$/,"")});
+          const ns=makeSheet({...src,label:uniqueLabel(src.label||file.name.replace(/\.[^.]+$/,""))});
           ns.placements.forEach(p=>cachedImg(p.src));
           ns.groups?.forEach(g=>{if(g.src)cachedImg(g.src);});
           const ids=[...ns.placements.map(p=>p.id),...ns.groups.map(g=>g.id),ns.id];
@@ -767,7 +773,7 @@ export default function GangSheetBuilder() {
       const newSheets=[];
       let left=remaining;
       while(left>0){
-        const ns=makeSheet({label:`${active.label} (overflow ${newSheets.length+2})`,sheetW,sheetH,sheetDPI,margin:m,gap:g,uploadedImg:active.uploadedImg,placeW:active.placeW,placeH:active.placeH});
+        const ns=makeSheet({label:uniqueLabel(`${active.label} (overflow ${newSheets.length+2})`),sheetW,sheetH,sheetDPI,margin:m,gap:g,uploadedImg:active.uploadedImg,placeW:active.placeW,placeH:active.placeH});
         const sp=packItems([],useW,useH,g,sheetW,sheetH,left,m);
         if(!sp.length) break;
         const gid=uid(),col=nextColor(),sn=uploadedImg.name.replace(/\.[^.]+$/,"");
@@ -1417,12 +1423,7 @@ export default function GangSheetBuilder() {
 
   const canvasToBlob=(canvas,mime,qual)=>new Promise(res=>canvas.toBlob(b=>res(b),mime,qual));
 
-  const downloadBlob=(blob,fname)=>{
-    const url=URL.createObjectURL(blob);
-    if(/iPad|iPhone|iPod/.test(navigator.userAgent)){window.open(url,"_blank");}
-    else{const a=document.createElement("a");a.href=url;a.download=fname;document.body.appendChild(a);a.click();document.body.removeChild(a);}
-    setTimeout(()=>URL.revokeObjectURL(url),5000);
-  };
+  const downloadBlob=(blob,fname)=>saveFileWithDialog(blob,fname);
 
   // ── Manual PNG encoder for large images (bypasses canvas size limits) ──
   const crc32Table=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c;}return t;})();
@@ -1674,9 +1675,7 @@ export default function GangSheetBuilder() {
       const wrap=canvasWrapRef.current;
       const ser={...s,zoom,scrollX:wrap?.scrollLeft||0,scrollY:wrap?.scrollTop||0,placements:s.placements.map(p=>({...p,src:sm[p.src]||p.src})),groups:s.groups.map(g=>({...g,src:sm[g.src]||g.src})),uploadedImg:s.uploadedImg?{...s.uploadedImg,src:sm[s.uploadedImg.src]||s.uploadedImg.src}:null};
       const blob=new Blob([JSON.stringify({version:1,sheet:ser,savedAt:new Date().toISOString()})],{type:"application/json"});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement("a");a.href=url;a.download=`${name}.gangowl`;document.body.appendChild(a);a.click();document.body.removeChild(a);
-      setTimeout(()=>URL.revokeObjectURL(url),5000);
+      await saveFileWithDialog(blob,`${name}.gangowl`);
       setSaveStatus(`✓ Exported "${name}.gangowl"`);
     }catch(err){setSaveStatus(`✗ Failed — ${err.message}`);}
   };

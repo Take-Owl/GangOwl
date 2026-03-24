@@ -23,6 +23,11 @@
       "csp": null
     }
   },
+  "plugins": {
+    "fs": {
+      "scope": { "allow": ["**"] }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

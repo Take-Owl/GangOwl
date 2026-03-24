@@ -72,3 +72,42 @@ export async function verifyLicense(licenseKey) {
 }
 
 export const PURCHASE_URL = "https://zcpersonal.gumroad.com/l/duydqm";
+
+// ── Desktop file save with native dialog ──
+export async function saveFileWithDialog(blob, defaultName) {
+  if (isDesktop) {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeFile } = await import("@tauri-apps/plugin-fs");
+      const ext = defaultName.split(".").pop();
+      const filters = {
+        png: [{ name: "PNG Image", extensions: ["png"] }],
+        jpg: [{ name: "JPEG Image", extensions: ["jpg", "jpeg"] }],
+        webp: [{ name: "WebP Image", extensions: ["webp"] }],
+        pdf: [{ name: "PDF Document", extensions: ["pdf"] }],
+        gangowl: [{ name: "GangOwl Project", extensions: ["gangowl"] }],
+      };
+      const path = await save({ defaultPath: defaultName, filters: filters[ext] || [] });
+      if (!path) return false; // user cancelled
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      await writeFile(path, bytes);
+      return true;
+    } catch {
+      // Tauri plugins not available — fall back to web download
+    }
+  }
+  // Web fallback
+  const url = URL.createObjectURL(blob);
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+    window.open(url, "_blank");
+  } else {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return true;
+}
