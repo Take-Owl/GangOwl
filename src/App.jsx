@@ -33,6 +33,7 @@ function makeSheet(o = {}) {
     lockSide: "width", copies: 1, gap: 0.25,
     rotation: 0, flipH: false, flipV: false,
     zoom: 1, scrollX: 0, scrollY: 0, mirrorExport: false, autoRotateFill: false, autoRotatePlace: false, autoDistribute: false, snapToItems: false, autoTrimImport: false,
+    cutEnabled: false, cutShape: "rounded-rect", cutOffset: 0.05, cutWidth: 1, cutColor: "#FF0000", cutRadius: 0.1,
     jobNotes: "", warning: "",
     ...o,
   };
@@ -90,6 +91,125 @@ async function toDataURL(src) {
 function nativeRes(nW,nH,pW,pH,dpi) {
   const e=Math.min(nW/pW,nH/pH);
   return {effDpi:e, warn:e<dpi*0.75, caution:e<dpi&&e>=dpi*0.75};
+}
+
+// ─── Cut contour generation ──────────────────────────────────────────────────
+const contourCache = new Map();
+function buildContourPath(shape, w, h, offsetPx, radiusPx) {
+  const o = offsetPx;
+  const path = new Path2D();
+  if (shape === "rectangle") {
+    path.rect(-w/2 - o, -h/2 - o, w + o*2, h + o*2);
+  } else if (shape === "rounded-rect") {
+    const r = Math.min(radiusPx, (w + o*2)/2, (h + o*2)/2);
+    const x = -w/2 - o, y = -h/2 - o, rw = w + o*2, rh = h + o*2;
+    path.moveTo(x + r, y);
+    path.lineTo(x + rw - r, y); path.arcTo(x + rw, y, x + rw, y + r, r);
+    path.lineTo(x + rw, y + rh - r); path.arcTo(x + rw, y + rh, x + rw - r, y + rh, r);
+    path.lineTo(x + r, y + rh); path.arcTo(x, y + rh, x, y + rh - r, r);
+    path.lineTo(x, y + r); path.arcTo(x, y, x + r, y, r);
+    path.closePath();
+  } else if (shape === "circle") {
+    const rx = w/2 + o, ry = h/2 + o;
+    path.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+  }
+  return path;
+}
+
+function buildDieCutPath(img, w, h, offsetPx) {
+  if (!img.complete || !img.naturalWidth) return null;
+  // Downsample large images for performance
+  const maxDim = 512;
+  const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+  const sw = Math.round(img.naturalWidth * scale), sh = Math.round(img.naturalHeight * scale);
+  const c = document.createElement("canvas"); c.width = sw; c.height = sh;
+  const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, sw, sh);
+  const d = ctx.getImageData(0, 0, sw, sh).data;
+  // Build binary alpha mask
+  const mask = new Uint8Array(sw * sh);
+  for (let i = 0; i < sw * sh; i++) if (d[i * 4 + 3] > 10) mask[i] = 1;
+  // Dilate mask by offset (in downsampled pixels)
+  const dilateR = Math.max(1, Math.round(offsetPx * scale * sw / w));
+  const dilated = new Uint8Array(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    if (mask[y * sw + x]) { dilated[y * sw + x] = 1; continue; }
+    let found = false;
+    for (let dy = -dilateR; dy <= dilateR && !found; dy++) for (let dx = -dilateR; dx <= dilateR && !found; dx++) {
+      if (dx * dx + dy * dy > dilateR * dilateR) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < sw && ny >= 0 && ny < sh && mask[ny * sw + nx]) found = true;
+    }
+    if (found) dilated[y * sw + x] = 1;
+  }
+  // Trace outer contour using simple boundary walk
+  const points = [];
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    if (!dilated[y * sw + x]) continue;
+    const neighbors = [
+      x > 0 && y > 0 ? dilated[(y-1) * sw + (x-1)] : 0,
+      y > 0 ? dilated[(y-1) * sw + x] : 0,
+      x < sw-1 && y > 0 ? dilated[(y-1) * sw + (x+1)] : 0,
+      x > 0 ? dilated[y * sw + (x-1)] : 0,
+      x < sw-1 ? dilated[y * sw + (x+1)] : 0,
+      x > 0 && y < sh-1 ? dilated[(y+1) * sw + (x-1)] : 0,
+      y < sh-1 ? dilated[(y+1) * sw + x] : 0,
+      x < sw-1 && y < sh-1 ? dilated[(y+1) * sw + (x+1)] : 0,
+    ];
+    if (neighbors.some(n => !n)) points.push([x, y]); // Edge pixel
+  }
+  if (points.length < 3) return null;
+  // Simplify with Douglas-Peucker
+  const simplified = simplifyPath(points, Math.max(1, 2 / scale));
+  // Convert to placement coordinates
+  const path = new Path2D();
+  for (let i = 0; i < simplified.length; i++) {
+    const px = (simplified[i][0] / sw - 0.5) * w;
+    const py = (simplified[i][1] / sh - 0.5) * h;
+    if (i === 0) path.moveTo(px, py); else path.lineTo(px, py);
+  }
+  path.closePath();
+  return path;
+}
+
+function simplifyPath(pts, epsilon) {
+  if (pts.length <= 2) return pts;
+  // Sort points by angle from centroid to get ordered perimeter
+  const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+  const cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+  pts.sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+  // Douglas-Peucker
+  function dp(pts, e) {
+    if (pts.length <= 2) return pts;
+    let maxD = 0, idx = 0;
+    const [a, b] = [pts[0], pts[pts.length - 1]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d = Math.abs((b[1]-a[1])*pts[i][0] - (b[0]-a[0])*pts[i][1] + b[0]*a[1] - b[1]*a[0]) /
+                Math.sqrt((b[1]-a[1])**2 + (b[0]-a[0])**2);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > e) {
+      const l = dp(pts.slice(0, idx + 1), e);
+      const r = dp(pts.slice(idx), e);
+      return [...l.slice(0, -1), ...r];
+    }
+    return [a, b];
+  }
+  return dp(pts, epsilon);
+}
+
+function getCutContour(src, shape, w, h, offsetPx, radiusPx) {
+  const key = `${src.substring(0, 50)}_${shape}_${w.toFixed(2)}_${h.toFixed(2)}_${offsetPx.toFixed(3)}_${radiusPx.toFixed(3)}`;
+  if (contourCache.has(key)) return contourCache.get(key);
+  let path;
+  if (shape === "die-cut") {
+    const img = cachedImg(src);
+    path = buildDieCutPath(img, w, h, offsetPx);
+  } else {
+    path = buildContourPath(shape, w, h, offsetPx, radiusPx);
+  }
+  contourCache.set(key, path);
+  if (contourCache.size > 500) { const first = contourCache.keys().next().value; contourCache.delete(first); }
+  return path;
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
@@ -193,7 +313,7 @@ export default function GangSheetBuilder() {
   // All settings/preferences that should survive a page refresh go here.
   // Any future state additions here are automatically persisted.
   const UI_KEY = "gangsheet-ui-state";
-  const SHEET_DEFAULTS = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",zoom:1,scrollX:0,scrollY:0,mirrorExport:false,autoRotateFill:false,autoRotatePlace:false,autoDistribute:false,snapToItems:false,autoTrimImport:false};
+  const SHEET_DEFAULTS = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",zoom:1,scrollX:0,scrollY:0,mirrorExport:false,autoRotateFill:false,autoRotatePlace:false,autoDistribute:false,snapToItems:false,autoTrimImport:false,cutEnabled:false,cutShape:"rounded-rect",cutOffset:0.05,cutWidth:1,cutColor:"#FF0000",cutRadius:0.1};
   const loadUIState = () => {
     try {
       const raw = localStorage.getItem(UI_KEY);
@@ -417,7 +537,7 @@ export default function GangSheetBuilder() {
 
   const sheetDefaults = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",placements:[],groups:[]};
   const merged = {...sheetDefaults,...active};
-  const {sheetW,sheetH,sheetDPI,margin,showMargin,showGrid,gridSize,gridStyle,snapToGrid,snapSize,canvasBg,mirrorExport,autoRotateFill,autoRotatePlace,autoDistribute,snapToItems,autoTrimImport,inkCostPerSqIn,
+  const {sheetW,sheetH,sheetDPI,margin,showMargin,showGrid,gridSize,gridStyle,snapToGrid,snapSize,canvasBg,mirrorExport,autoRotateFill,autoRotatePlace,autoDistribute,snapToItems,autoTrimImport,cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius,inkCostPerSqIn,
          placements,groups,uploadedImg,placeW,placeH,lockSide,copies,gap,
          rotation,flipH,flipV,jobNotes,warning} = merged;
 
@@ -993,6 +1113,12 @@ export default function GangSheetBuilder() {
         if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
         else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
       }
+      // Draw cut contour line
+      if(cutEnabled&&cutShape!=="none"){
+        const osPx=spx(cutOffset),rPx=spx(cutRadius);
+        const contour=getCutContour(p.src,cutShape,pw,ph,osPx,rPx);
+        if(contour){ctx.strokeStyle=cutColor;ctx.lineWidth=cutWidth;ctx.stroke(contour);}
+      }
       // Draw selection/hover border inside the rotation transform
       if(isSel){
         ctx.strokeStyle=C.amber;ctx.lineWidth=2;ctx.strokeRect(-pw/2-1,-ph/2-1,pw+2,ph+2);
@@ -1398,7 +1524,7 @@ export default function GangSheetBuilder() {
   };
 
   // Draw relevant placements onto a tile canvas at the given region
-  const drawTile=(cache,placements,dpi,tileX,tileY,tileW,tileH,bg,mirror=false)=>{
+  const drawTile=(cache,placements,dpi,tileX,tileY,tileW,tileH,bg,mirror=false,cutOpts=null)=>{
     const c=document.createElement("canvas");c.width=tileW;c.height=tileH;
     const ctx=c.getContext("2d");
     if(!ctx) return null;
@@ -1416,6 +1542,11 @@ export default function GangSheetBuilder() {
       if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);
       if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
       ctx.drawImage(img,-pw2/2,-ph2/2,pw2,ph2);
+      if(cutOpts&&cutOpts.enabled&&cutOpts.shape!=="none"){
+        const osPx=ipx(cutOpts.offset,dpi),rPx=ipx(cutOpts.radius,dpi);
+        const contour=getCutContour(p.src,cutOpts.shape,pw2,ph2,osPx,rPx);
+        if(contour){ctx.strokeStyle=cutOpts.color;ctx.lineWidth=cutOpts.width;ctx.stroke(contour);}
+      }
       ctx.restore();
     }
     return c;
@@ -1439,7 +1570,7 @@ export default function GangSheetBuilder() {
     return buf;
   };
 
-  const buildPngFromStrips=async(fullW,fullH,cache,placements,dpi,bg,onProgress)=>{
+  const buildPngFromStrips=async(fullW,fullH,cache,placements,dpi,bg,onProgress,cutOpts=null)=>{
     // PNG signature
     const sig=new Uint8Array([137,80,78,71,13,10,26,10]);
     // IHDR
@@ -1466,7 +1597,7 @@ export default function GangSheetBuilder() {
       const tileY=s*stripH;
       const tileH=Math.min(stripH,fullH-tileY);
       onProgress(s,numStrips,"Rendering");
-      const tile=drawTile(cache,placements,dpi,0,tileY,fullW,tileH,bg);
+      const tile=drawTile(cache,placements,dpi,0,tileY,fullW,tileH,bg,false,cutOpts);
       if(!tile) throw new Error("Tile render failed — out of memory");
       const ctx=tile.getContext("2d");
       const imgData=ctx.getImageData(0,0,fullW,tileH);
@@ -1574,7 +1705,8 @@ export default function GangSheetBuilder() {
 
     if(!needsTiling){
       setExportProgress(`[${sheet.label}] Rendering…`);setExportPct(pctFn(25));
-      const tile=drawTile(cache,sheet.placements,sheet.sheetDPI,0,0,fullW,fullH,bg,sheet.mirrorExport);
+      const cutOpts=sheet.cutEnabled?{enabled:true,shape:sheet.cutShape,offset:sheet.cutOffset,width:sheet.cutWidth,color:sheet.cutColor,radius:sheet.cutRadius}:null;
+      const tile=drawTile(cache,sheet.placements,sheet.sheetDPI,0,0,fullW,fullH,bg,sheet.mirrorExport,cutOpts);
       if(!tile) throw new Error("Could not create canvas — try closing other tabs");
       setExportProgress(`[${sheet.label}] Encoding ${exportFormat.toUpperCase()}…`);setExportPct(pctFn(80));
       await new Promise(r=>setTimeout(r,50));
@@ -1599,7 +1731,7 @@ export default function GangSheetBuilder() {
       const blob=await buildPngFromStrips(fullW,fullH,cache,sheet.placements,sheet.sheetDPI,bg,(done,total,phase)=>{
         setExportPct(pctFn(22+Math.round((done/total)*70)));
         setExportProgress(`[${sheet.label}] ${phase} strip ${done}/${total}…`);
-      });
+      },cutOpts);
       downloadBlob(blob,`${baseName}.png`);
     } else {
       // For JPEG/WebP: render strips, draw each onto a shared BMP buffer, then re-encode
@@ -1611,7 +1743,7 @@ export default function GangSheetBuilder() {
       const pngBlob=await buildPngFromStrips(fullW,fullH,cache,sheet.placements,sheet.sheetDPI,"#ffffff",(done,total,phase)=>{
         setExportPct(pctFn(22+Math.round((done/total)*60)));
         setExportProgress(`[${sheet.label}] ${phase} strip ${done}/${total}…`);
-      });
+      },cutOpts);
       // Convert PNG blob to JPEG/WebP via createImageBitmap + small-tile re-encode
       // For large images this may not work either, so just download as PNG with a note
       setExportProgress(`[${sheet.label}] Image exceeds canvas limits — exporting as PNG instead`);
@@ -1787,6 +1919,24 @@ export default function GangSheetBuilder() {
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8}}>
           <div style={S.label}>Smart Guides</div><Toggle on={snapToItems} onClick={()=>updActive({snapToItems:!snapToItems})}/>
         </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8}}>
+          <div style={S.label}>Cut Lines</div><Toggle on={cutEnabled} onClick={()=>updActive({cutEnabled:!cutEnabled})}/>
+        </div>
+        {cutEnabled&&<div style={{marginTop:6,display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"flex",gap:4}}>
+            {[["die-cut","Die-Cut"],["rounded-rect","Rounded"],["rectangle","Rect"],["circle","Circle"]].map(([v,l])=>(
+              <button key={v} style={{flex:1,padding:"4px 0",borderRadius:4,border:`1px solid ${cutShape===v?C.accentSolid:C.border}`,background:cutShape===v?C.selected:"transparent",color:cutShape===v?C.accent:C.muted,cursor:"pointer",fontSize:8,fontWeight:700}} onClick={()=>updActive({cutShape:v})}>{l}</button>
+            ))}
+          </div>
+          <div style={S.row}>
+            <div style={{flex:1}}><div style={S.label}>Offset (in)</div><input style={S.input} type="number" min="0" max="1" step="0.01" value={cutOffset} onChange={e=>updActive({cutOffset:parseFloat(e.target.value)||0})}/></div>
+            <div style={{flex:1}}><div style={S.label}>Width (px)</div><input style={S.input} type="number" min="0.5" max="10" step="0.5" value={cutWidth} onChange={e=>updActive({cutWidth:parseFloat(e.target.value)||1})}/></div>
+          </div>
+          <div style={S.row}>
+            <div style={{flex:1}}><div style={S.label}>Color</div><input type="color" value={cutColor} onChange={e=>updActive({cutColor:e.target.value})} style={{width:"100%",height:28,border:`1px solid ${C.border}`,borderRadius:4,padding:0,cursor:"pointer",background:"transparent"}}/></div>
+            {cutShape==="rounded-rect"&&<div style={{flex:1}}><div style={S.label}>Radius (in)</div><input style={S.input} type="number" min="0" max="2" step="0.05" value={cutRadius} onChange={e=>updActive({cutRadius:parseFloat(e.target.value)||0})}/></div>}
+          </div>
+        </div>}
         <div style={{marginTop:8}}>
           <div style={S.label}>Canvas Background</div>
           <div style={{display:"flex",gap:4,marginTop:4}}>
