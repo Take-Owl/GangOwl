@@ -95,13 +95,14 @@ function nativeRes(nW,nH,pW,pH,dpi) {
 
 // ─── Cut contour generation ──────────────────────────────────────────────────
 const contourCache = new Map();
+
 function buildContourPath(shape, w, h, offsetPx, radiusPx) {
   const o = offsetPx;
   const path = new Path2D();
   if (shape === "rectangle") {
     path.rect(-w/2 - o, -h/2 - o, w + o*2, h + o*2);
   } else if (shape === "rounded-rect") {
-    const r = Math.min(radiusPx, (w + o*2)/2, (h + o*2)/2);
+    const r = Math.max(0, Math.min(radiusPx, (w + o*2)/2, (h + o*2)/2));
     const x = -w/2 - o, y = -h/2 - o, rw = w + o*2, rh = h + o*2;
     path.moveTo(x + r, y);
     path.lineTo(x + rw - r, y); path.arcTo(x + rw, y, x + rw, y + r, r);
@@ -110,105 +111,113 @@ function buildContourPath(shape, w, h, offsetPx, radiusPx) {
     path.lineTo(x, y + r); path.arcTo(x, y, x + r, y, r);
     path.closePath();
   } else if (shape === "circle") {
-    const rx = w/2 + o, ry = h/2 + o;
-    path.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    path.ellipse(0, 0, w/2 + o, h/2 + o, 0, 0, Math.PI * 2);
   }
   return path;
 }
 
 function buildDieCutPath(img, w, h, offsetPx) {
   if (!img.complete || !img.naturalWidth) return null;
-  // Downsample large images for performance
-  const maxDim = 512;
-  const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
-  const sw = Math.round(img.naturalWidth * scale), sh = Math.round(img.naturalHeight * scale);
-  const c = document.createElement("canvas"); c.width = sw; c.height = sh;
-  const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, sw, sh);
-  const d = ctx.getImageData(0, 0, sw, sh).data;
-  // Build binary alpha mask
+  // Downsample for performance
+  const maxDim = 256;
+  const sc = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+  const sw = Math.max(4, Math.round(img.naturalWidth * sc));
+  const sh = Math.max(4, Math.round(img.naturalHeight * sc));
+  const cv = document.createElement("canvas"); cv.width = sw; cv.height = sh;
+  const cx = cv.getContext("2d"); cx.drawImage(img, 0, 0, sw, sh);
+  const d = cx.getImageData(0, 0, sw, sh).data;
+  // Binary alpha mask
   const mask = new Uint8Array(sw * sh);
   for (let i = 0; i < sw * sh; i++) if (d[i * 4 + 3] > 10) mask[i] = 1;
-  // Dilate mask by offset (in downsampled pixels)
-  const dilateR = Math.max(1, Math.round(offsetPx * scale * sw / w));
-  const dilated = new Uint8Array(sw * sh);
-  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-    if (mask[y * sw + x]) { dilated[y * sw + x] = 1; continue; }
-    let found = false;
-    for (let dy = -dilateR; dy <= dilateR && !found; dy++) for (let dx = -dilateR; dx <= dilateR && !found; dx++) {
-      if (dx * dx + dy * dy > dilateR * dilateR) continue;
-      const nx = x + dx, ny = y + dy;
-      if (nx >= 0 && nx < sw && ny >= 0 && ny < sh && mask[ny * sw + nx]) found = true;
+  // Dilate by offset pixels (converted to mask space)
+  const dilateR = Math.max(0, Math.round(offsetPx * sw / w));
+  let src = mask;
+  if (dilateR > 0) {
+    const dst = new Uint8Array(sw * sh);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      if (src[y * sw + x]) { dst[y * sw + x] = 1; continue; }
+      outer: for (let dy = -dilateR; dy <= dilateR; dy++) for (let dx = -dilateR; dx <= dilateR; dx++) {
+        if (dx * dx + dy * dy > dilateR * dilateR) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < sw && ny >= 0 && ny < sh && src[ny * sw + nx]) { dst[y * sw + x] = 1; break outer; }
+      }
     }
-    if (found) dilated[y * sw + x] = 1;
+    src = dst;
   }
-  // Trace outer contour using simple boundary walk
-  const points = [];
-  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-    if (!dilated[y * sw + x]) continue;
-    const neighbors = [
-      x > 0 && y > 0 ? dilated[(y-1) * sw + (x-1)] : 0,
-      y > 0 ? dilated[(y-1) * sw + x] : 0,
-      x < sw-1 && y > 0 ? dilated[(y-1) * sw + (x+1)] : 0,
-      x > 0 ? dilated[y * sw + (x-1)] : 0,
-      x < sw-1 ? dilated[y * sw + (x+1)] : 0,
-      x > 0 && y < sh-1 ? dilated[(y+1) * sw + (x-1)] : 0,
-      y < sh-1 ? dilated[(y+1) * sw + x] : 0,
-      x < sw-1 && y < sh-1 ? dilated[(y+1) * sw + (x+1)] : 0,
-    ];
-    if (neighbors.some(n => !n)) points.push([x, y]); // Edge pixel
+  // Moore neighborhood contour tracing
+  const g = (x, y) => x >= 0 && x < sw && y >= 0 && y < sh ? src[y * sw + x] : 0;
+  // Find starting pixel (first solid pixel with empty neighbor above)
+  let sx = -1, sy = -1;
+  for (let y = 0; y < sh && sx < 0; y++) for (let x = 0; x < sw && sx < 0; x++) {
+    if (g(x, y) && !g(x, y - 1)) { sx = x; sy = y; }
   }
-  if (points.length < 3) return null;
+  if (sx < 0) return null;
+  // 8-connected neighbor directions: right, down-right, down, down-left, left, up-left, up, up-right
+  const dx8 = [1, 1, 0, -1, -1, -1, 0, 1];
+  const dy8 = [0, 1, 1, 1, 0, -1, -1, -1];
+  const contour = [[sx, sy]];
+  let cx2 = sx, cy2 = sy, dir = 7; // start looking up-right (came from above)
+  for (let iter = 0; iter < sw * sh * 2; iter++) {
+    let found = false;
+    // Search neighbors starting from (dir+5)%8 (backtrack direction + 1)
+    const startDir = (dir + 5) % 8;
+    for (let i = 0; i < 8; i++) {
+      const d2 = (startDir + i) % 8;
+      const nx = cx2 + dx8[d2], ny = cy2 + dy8[d2];
+      if (g(nx, ny)) {
+        cx2 = nx; cy2 = ny; dir = d2;
+        if (cx2 === sx && cy2 === sy) { found = true; break; } // back to start
+        contour.push([cx2, cy2]);
+        found = true; break;
+      }
+    }
+    if (!found || (cx2 === sx && cy2 === sy)) break;
+  }
+  if (contour.length < 3) return null;
   // Simplify with Douglas-Peucker
-  const simplified = simplifyPath(points, Math.max(1, 2 / scale));
-  // Convert to placement coordinates
+  const eps = Math.max(0.5, 1.5 / sc);
+  const simp = dpSimplify(contour, eps);
+  // Convert to placement-local coords (centered)
   const path = new Path2D();
-  for (let i = 0; i < simplified.length; i++) {
-    const px = (simplified[i][0] / sw - 0.5) * w;
-    const py = (simplified[i][1] / sh - 0.5) * h;
+  for (let i = 0; i < simp.length; i++) {
+    const px = (simp[i][0] / sw - 0.5) * w;
+    const py = (simp[i][1] / sh - 0.5) * h;
     if (i === 0) path.moveTo(px, py); else path.lineTo(px, py);
   }
   path.closePath();
   return path;
 }
 
-function simplifyPath(pts, epsilon) {
+function dpSimplify(pts, epsilon) {
   if (pts.length <= 2) return pts;
-  // Sort points by angle from centroid to get ordered perimeter
-  const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
-  const cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
-  pts.sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
-  // Douglas-Peucker
-  function dp(pts, e) {
-    if (pts.length <= 2) return pts;
-    let maxD = 0, idx = 0;
-    const [a, b] = [pts[0], pts[pts.length - 1]];
-    for (let i = 1; i < pts.length - 1; i++) {
-      const d = Math.abs((b[1]-a[1])*pts[i][0] - (b[0]-a[0])*pts[i][1] + b[0]*a[1] - b[1]*a[0]) /
-                Math.sqrt((b[1]-a[1])**2 + (b[0]-a[0])**2);
-      if (d > maxD) { maxD = d; idx = i; }
-    }
-    if (maxD > e) {
-      const l = dp(pts.slice(0, idx + 1), e);
-      const r = dp(pts.slice(idx), e);
-      return [...l.slice(0, -1), ...r];
-    }
-    return [a, b];
+  let maxD = 0, idx = 0;
+  const [a, b] = [pts[0], pts[pts.length - 1]];
+  const lenSq = (b[0]-a[0])**2 + (b[1]-a[1])**2;
+  for (let i = 1; i < pts.length - 1; i++) {
+    let d;
+    if (lenSq === 0) d = Math.sqrt((pts[i][0]-a[0])**2 + (pts[i][1]-a[1])**2);
+    else d = Math.abs((b[1]-a[1])*pts[i][0] - (b[0]-a[0])*pts[i][1] + b[0]*a[1] - b[1]*a[0]) / Math.sqrt(lenSq);
+    if (d > maxD) { maxD = d; idx = i; }
   }
-  return dp(pts, epsilon);
+  if (maxD > epsilon) {
+    const l = dpSimplify(pts.slice(0, idx + 1), epsilon);
+    const r = dpSimplify(pts.slice(idx), epsilon);
+    return [...l.slice(0, -1), ...r];
+  }
+  return [a, b];
 }
 
 function getCutContour(src, shape, w, h, offsetPx, radiusPx) {
-  const key = `${src.substring(0, 50)}_${shape}_${w.toFixed(2)}_${h.toFixed(2)}_${offsetPx.toFixed(3)}_${radiusPx.toFixed(3)}`;
+  const key = `${src.substring(0, 50)}_${shape}_${w.toFixed(1)}_${h.toFixed(1)}_${offsetPx.toFixed(1)}_${radiusPx.toFixed(1)}`;
   if (contourCache.has(key)) return contourCache.get(key);
   let path;
   if (shape === "die-cut") {
-    const img = cachedImg(src);
-    path = buildDieCutPath(img, w, h, offsetPx);
+    path = buildDieCutPath(cachedImg(src), w, h, offsetPx);
   } else {
     path = buildContourPath(shape, w, h, offsetPx, radiusPx);
   }
   contourCache.set(key, path);
-  if (contourCache.size > 500) { const first = contourCache.keys().next().value; contourCache.delete(first); }
+  if (contourCache.size > 200) { const first = contourCache.keys().next().value; contourCache.delete(first); }
   return path;
 }
 
@@ -1004,9 +1013,10 @@ export default function GangSheetBuilder() {
     if(!selectedItem) return;
     const p=selectedItem;
     const packed=packItems(placements,p.w,p.h,parseFloat(gap)||0,sheetW,sheetH,1,parseFloat(margin)||0);
-    if(!packed.length){updActive({warning:"No space."});return;}
-    const np={...p,id:uid(),x:packed[0].x,y:packed[0].y};
-    updActive(s=>({placements:[...s.placements,np]})); setSelected(np.id);
+    const nx=packed.length?packed[0].x:p.x+0.5;
+    const ny=packed.length?packed[0].y:p.y+0.5;
+    const np={...p,id:uid(),x:nx,y:ny};
+    updActive(s=>({placements:[...s.placements,np],warning:packed.length?"":"⚠ Duplicated outside canvas bounds"})); setSelected(np.id);
   };
   keyActionRef.current = { deleteSelected, duplicateSelected, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25 };
   const rotateSelected  =deg=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,rotation:((p.rotation||0)+deg+360)%360})}));};
