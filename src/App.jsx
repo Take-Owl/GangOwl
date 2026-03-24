@@ -145,39 +145,79 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Die-cut: build a unified outline around all visible content using shadow trick
-// Creates a solid silhouette expanded by offset, then strokes it
+// Die-cut: crisp outline via binary mask dilation at high resolution
+// 1. Render image alpha to a high-res binary mask
+// 2. Dilate the mask by offset (circular structuring element)
+// 3. XOR with original mask to get the outline ring
+// 4. Render as crisp colored pixels
 function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   if (!img.complete || !img.naturalWidth) return null;
-  const oPx = Math.max(1, offsetPx);
-  const lw = Math.max(0.5, lineWidth);
-  const pad = Math.ceil(oPx + lw + 2);
-  const tw = Math.ceil(w + pad * 2), th = Math.ceil(h + pad * 2);
-  // Step 1: Create solid silhouette of the image (all opaque pixels become solid color)
-  const c1 = document.createElement("canvas"); c1.width = tw; c1.height = th;
-  const ctx1 = c1.getContext("2d");
-  // Draw original image
-  ctx1.drawImage(img, pad, pad, w, h);
-  // Replace all visible pixels with solid color
-  ctx1.globalCompositeOperation = "source-in";
-  ctx1.fillStyle = color || "#FF0000";
-  ctx1.fillRect(0, 0, tw, th);
-  ctx1.globalCompositeOperation = "source-over";
-  // Step 2: Draw the silhouette with shadow to create expanded shape
-  const c2 = document.createElement("canvas"); c2.width = tw; c2.height = th;
+  // Use high resolution for crisp output
+  const maxDim = 1024;
+  const sc = Math.min(maxDim / Math.max(img.naturalWidth, img.naturalHeight), w / img.naturalWidth * 4);
+  const iw = Math.max(8, Math.round(img.naturalWidth * sc));
+  const ih = Math.max(8, Math.round(img.naturalHeight * sc));
+  const dilateR = Math.max(1, Math.round(offsetPx * iw / w));
+  const strokeR = Math.max(1, Math.round(lineWidth * iw / w * 0.5));
+  const pad = dilateR + strokeR + 2;
+  const mw = iw + pad * 2, mh = ih + pad * 2;
+  // Render image to get alpha
+  const c1 = document.createElement("canvas"); c1.width = iw; c1.height = ih;
+  c1.getContext("2d").drawImage(img, 0, 0, iw, ih);
+  const d = c1.getContext("2d").getImageData(0, 0, iw, ih).data;
+  // Binary alpha mask in padded space
+  const mask = new Uint8Array(mw * mh);
+  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
+    if (d[(y * iw + x) * 4 + 3] > 10) mask[(y + pad) * mw + (x + pad)] = 1;
+  }
+  // Dilate mask by offset radius
+  const outer = new Uint8Array(mw * mh);
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+    if (mask[y * mw + x]) { outer[y * mw + x] = 1; continue; }
+    const r = dilateR + strokeR;
+    const rSq = r * r;
+    // Sparse check: sample at step intervals for speed
+    const step = Math.max(1, Math.floor(r / 4));
+    for (let dy = -r; dy <= r; dy += step) for (let dx = -r; dx <= r; dx += step) {
+      if (dx * dx + dy * dy > rSq) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < mw && ny >= 0 && ny < mh && mask[ny * mw + nx]) { outer[y * mw + x] = 1; dy = r + 1; break; }
+    }
+  }
+  // Inner boundary: dilate mask by (offset - strokeWidth) to define inner edge
+  const inner = new Uint8Array(mw * mh);
+  const innerR = Math.max(0, dilateR - strokeR);
+  if (innerR > 0) {
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      if (mask[y * mw + x]) { inner[y * mw + x] = 1; continue; }
+      const rSq = innerR * innerR;
+      const step = Math.max(1, Math.floor(innerR / 4));
+      for (let dy = -innerR; dy <= innerR; dy += step) for (let dx = -innerR; dx <= innerR; dx += step) {
+        if (dx * dx + dy * dy > rSq) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < mw && ny >= 0 && ny < mh && mask[ny * mw + nx]) { inner[y * mw + x] = 1; dy = innerR + 1; break; }
+      }
+    }
+  } else {
+    inner.set(mask);
+  }
+  // Render: outer minus inner = outline ring
+  const c2 = document.createElement("canvas"); c2.width = mw; c2.height = mh;
   const ctx2 = c2.getContext("2d");
-  ctx2.shadowColor = color || "#FF0000";
-  ctx2.shadowBlur = oPx;
-  ctx2.shadowOffsetX = 0;
-  ctx2.shadowOffsetY = 0;
-  // Draw multiple times to make shadow solid (shadowBlur is gaussian, needs reinforcement)
-  for (let i = 0; i < 6; i++) ctx2.drawImage(c1, 0, 0);
-  ctx2.shadowColor = "transparent";
-  // Step 3: Cut out the original image shape — leaves only the outline ring
-  ctx2.globalCompositeOperation = "destination-out";
-  ctx2.drawImage(img, pad, pad, w, h);
-  ctx2.globalCompositeOperation = "source-over";
-  return { canvas: c2, pad, cw: Math.ceil(w), ch: Math.ceil(h), tw, th };
+  const imgData = ctx2.createImageData(mw, mh);
+  const r = parseInt((color || "#FF0000").slice(1, 3), 16) || 255;
+  const g = parseInt((color || "#FF0000").slice(3, 5), 16) || 0;
+  const b = parseInt((color || "#FF0000").slice(5, 7), 16) || 0;
+  for (let i = 0; i < mw * mh; i++) {
+    if (outer[i] && !inner[i]) {
+      imgData.data[i * 4] = r;
+      imgData.data[i * 4 + 1] = g;
+      imgData.data[i * 4 + 2] = b;
+      imgData.data[i * 4 + 3] = 255;
+    }
+  }
+  ctx2.putImageData(imgData, 0, 0);
+  return { canvas: c2, pad, cw: iw, ch: ih, tw: mw, th: mh };
 }
 
 const dieCutCache = new Map();
