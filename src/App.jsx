@@ -558,7 +558,8 @@ export default function GangSheetBuilder() {
       uploadedImg:{src:item.src,naturalW:item.naturalW,naturalH:item.naturalH,name:item.name},
       placeW:parseFloat(item.w).toFixed(3),
       placeH:parseFloat(item.h).toFixed(3),
-      copies:1
+      copies:1,
+      cutEnabled:item.cutEnabled||false,cutShape:item.cutShape||"rounded-rect",cutOffset:item.cutOffset||0.05,cutWidth:item.cutWidth||1,cutColor:item.cutColor||"#FF0000",cutRadius:item.cutRadius||0.1,
     });
     setLeftTab("add");
   },[selected]);
@@ -872,7 +873,7 @@ export default function GangSheetBuilder() {
   // ── Auto-place ──
   const autoPlace=()=>{
     if(!uploadedImg||!placeW||!placeH) return;
-    const w=parseFloat(placeW),h=parseFloat(placeH),g=parseFloat(gap)||0,n=parseInt(copies)||1,m=parseFloat(margin)||0;
+    const w=parseFloat(placeW),h=parseFloat(placeH),g=(parseFloat(gap)||0)+(cutEnabled?(cutOffset||0)*2:0),n=parseInt(copies)||1,m=parseFloat(margin)||0;
     let packed=packItems(placements,w,h,g,sheetW,sheetH,n,m);
     let useW=w,useH=h,useRot=rotation;
     if(autoRotatePlace&&w!==h){
@@ -898,7 +899,8 @@ export default function GangSheetBuilder() {
         if(!sp.length) break;
         const gid=uid(),col=nextColor(),sn=uploadedImg.name.replace(/\.[^.]+$/,"");
         ns.groups=[{id:gid,name:sn,color:col,src:uploadedImg.src,w:useW,h:useH,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation:useRot,flipH,flipV}];
-        ns.placements=sp.map(p=>({id:uid(),groupId:gid,color:col,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:useRot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH}));
+        const cp=cutEnabled?{cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius}:{};
+        ns.placements=sp.map(p=>({id:uid(),groupId:gid,color:col,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:useRot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cp}));
         newSheets.push(ns);
         left-=sp.length;
       }
@@ -913,14 +915,15 @@ export default function GangSheetBuilder() {
     if(rW) warn=`⚠ ${Math.round(effDpi)}dpi — may blur (target ${sheetDPI})`;
     else if(caution) warn=`⚠ ${Math.round(effDpi)}dpi at this size`;
     const color=nextColor(),groupId=uid(),shortName=uploadedImg.name.replace(/\.[^.]+$/,"");
-    updActive(s=>({warning:warn,groups:[...s.groups,{id:groupId,name:shortName,color,src:uploadedImg.src,w:useW,h:useH,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation:useRot,flipH,flipV}],placements:[...s.placements,...packed.map(p=>({id:uid(),groupId,color,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:useRot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH}))]}));
+    const cutProps=cutEnabled?{cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius}:{};
+    updActive(s=>({warning:warn,groups:[...s.groups,{id:groupId,name:shortName,color,src:uploadedImg.src,w:useW,h:useH,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation:useRot,flipH,flipV}],placements:[...s.placements,...packed.map(p=>({id:uid(),groupId,color,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:useRot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cutProps}))]}));
     if(isMobile) setDrawer(null);
   };
 
   const doFillSheet=()=>{
     setShowFillConfirm(false);
     if(!groups.length) return;
-    const designs=groups.map(g=>({w:g.w,h:g.h,gap:g.gap||gap,src:g.src,groupId:g.id,color:g.color,name:g.name,naturalW:g.naturalW,naturalH:g.naturalH}));
+    const designs=groups.map(g=>{const gp=placements.find(p=>p.groupId===g.id);const co=gp?.cutEnabled?(gp.cutOffset||0)*2:0;return{w:g.w,h:g.h,gap:(g.gap||gap)+co,src:g.src,groupId:g.id,color:g.color,name:g.name,naturalW:g.naturalW,naturalH:g.naturalH};});
     const existing=placements.map(p=>({x:p.x,y:p.y,w:p.w,h:p.h}));
     const packed=fillSheet(designs,sheetW,sheetH,parseFloat(margin)||0,existing,autoRotateFill);
     updActive(s=>({placements:[...s.placements,...packed.map(p=>({id:uid(),groupId:p.groupId,color:p.color,src:p.src,name:p.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:p.rotation||0,flipH:false,flipV:false,naturalW:p.naturalW,naturalH:p.naturalH}))]}));
@@ -1113,11 +1116,11 @@ export default function GangSheetBuilder() {
         if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
         else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
       }
-      // Draw cut contour line
-      if(cutEnabled&&cutShape!=="none"){
-        const osPx=spx(cutOffset),rPx=spx(cutRadius);
-        const contour=getCutContour(p.src,cutShape,pw,ph,osPx,rPx);
-        if(contour){ctx.strokeStyle=cutColor;ctx.lineWidth=cutWidth;ctx.stroke(contour);}
+      // Draw cut contour line (per-placement)
+      if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
+        const osPx=spx(p.cutOffset||0),rPx=spx(p.cutRadius||0);
+        const contour=getCutContour(p.src,p.cutShape,pw,ph,osPx,rPx);
+        if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
       }
       // Draw selection/hover border inside the rotation transform
       if(isSel){
@@ -1542,10 +1545,10 @@ export default function GangSheetBuilder() {
       if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);
       if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
       ctx.drawImage(img,-pw2/2,-ph2/2,pw2,ph2);
-      if(cutOpts&&cutOpts.enabled&&cutOpts.shape!=="none"){
-        const osPx=ipx(cutOpts.offset,dpi),rPx=ipx(cutOpts.radius,dpi);
-        const contour=getCutContour(p.src,cutOpts.shape,pw2,ph2,osPx,rPx);
-        if(contour){ctx.strokeStyle=cutOpts.color;ctx.lineWidth=cutOpts.width;ctx.stroke(contour);}
+      if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
+        const osPx=ipx(p.cutOffset||0,dpi),rPx=ipx(p.cutRadius||0,dpi);
+        const contour=getCutContour(p.src,p.cutShape,pw2,ph2,osPx,rPx);
+        if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
       }
       ctx.restore();
     }
@@ -1919,24 +1922,6 @@ export default function GangSheetBuilder() {
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8}}>
           <div style={S.label}>Smart Guides</div><Toggle on={snapToItems} onClick={()=>updActive({snapToItems:!snapToItems})}/>
         </div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8}}>
-          <div style={S.label}>Cut Lines</div><Toggle on={cutEnabled} onClick={()=>updActive({cutEnabled:!cutEnabled})}/>
-        </div>
-        {cutEnabled&&<div style={{marginTop:6,display:"flex",flexDirection:"column",gap:6}}>
-          <div style={{display:"flex",gap:4}}>
-            {[["die-cut","Die-Cut"],["rounded-rect","Rounded"],["rectangle","Rect"],["circle","Circle"]].map(([v,l])=>(
-              <button key={v} style={{flex:1,padding:"4px 0",borderRadius:4,border:`1px solid ${cutShape===v?C.accentSolid:C.border}`,background:cutShape===v?C.selected:"transparent",color:cutShape===v?C.accent:C.muted,cursor:"pointer",fontSize:8,fontWeight:700}} onClick={()=>updActive({cutShape:v})}>{l}</button>
-            ))}
-          </div>
-          <div style={S.row}>
-            <div style={{flex:1}}><div style={S.label}>Offset (in)</div><input style={S.input} type="number" min="0" max="1" step="0.01" value={cutOffset} onChange={e=>updActive({cutOffset:parseFloat(e.target.value)||0})}/></div>
-            <div style={{flex:1}}><div style={S.label}>Width (px)</div><input style={S.input} type="number" min="0.5" max="10" step="0.5" value={cutWidth} onChange={e=>updActive({cutWidth:parseFloat(e.target.value)||1})}/></div>
-          </div>
-          <div style={S.row}>
-            <div style={{flex:1}}><div style={S.label}>Color</div><input type="color" value={cutColor} onChange={e=>updActive({cutColor:e.target.value})} style={{width:"100%",height:28,border:`1px solid ${C.border}`,borderRadius:4,padding:0,cursor:"pointer",background:"transparent"}}/></div>
-            {cutShape==="rounded-rect"&&<div style={{flex:1}}><div style={S.label}>Radius (in)</div><input style={S.input} type="number" min="0" max="2" step="0.05" value={cutRadius} onChange={e=>updActive({cutRadius:parseFloat(e.target.value)||0})}/></div>}
-          </div>
-        </div>}
         <div style={{marginTop:8}}>
           <div style={S.label}>Canvas Background</div>
           <div style={{display:"flex",gap:4,marginTop:4}}>
@@ -2012,6 +1997,25 @@ export default function GangSheetBuilder() {
         <textarea style={{...S.input,minHeight:isMobile?56:44,fontSize:isMobile?13:11}} placeholder="Customer, order #, size..." value={jobNotes} onChange={e=>updActive({jobNotes:e.target.value})}/>
       </div>
       {warning&&<div style={S.warn}>{warning}</div>}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4,marginTop:4}}>
+        <span style={{fontSize:10,color:C.muted}}>Cut Lines</span>
+        <Toggle on={cutEnabled} onClick={()=>{const nv=!cutEnabled;updActive({cutEnabled:nv});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutEnabled:nv,cutShape,cutOffset,cutWidth,cutColor,cutRadius})}));}}/>
+      </div>
+      {cutEnabled&&<div style={{marginBottom:6,display:"flex",flexDirection:"column",gap:5}}>
+        <div style={{display:"flex",gap:3}}>
+          {[["die-cut","Die-Cut"],["rounded-rect","Rounded"],["rectangle","Rect"],["circle","Circle"]].map(([v,l])=>(
+            <button key={v} style={{flex:1,padding:"4px 0",borderRadius:4,border:`1px solid ${cutShape===v?C.accentSolid:C.border}`,background:cutShape===v?C.selected:"transparent",color:cutShape===v?C.accent:C.muted,cursor:"pointer",fontSize:8,fontWeight:700}} onClick={()=>{updActive({cutShape:v});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutShape:v})}));}}>{l}</button>
+          ))}
+        </div>
+        <div style={S.row}>
+          <div style={{flex:1}}><div style={S.label}>Offset (in)</div><input style={S.input} type="number" min="0" max="1" step="0.01" value={cutOffset} onChange={e=>{const v=parseFloat(e.target.value)||0;updActive({cutOffset:v});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutOffset:v})}));}}/></div>
+          <div style={{flex:1}}><div style={S.label}>Width (px)</div><input style={S.input} type="number" min="0.5" max="10" step="0.5" value={cutWidth} onChange={e=>{const v=parseFloat(e.target.value)||1;updActive({cutWidth:v});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutWidth:v})}));}}/></div>
+        </div>
+        <div style={S.row}>
+          <div style={{flex:1}}><div style={S.label}>Color</div><input type="color" value={cutColor} onChange={e=>{updActive({cutColor:e.target.value});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutColor:e.target.value})}));}} style={{width:"100%",height:28,border:`1px solid ${C.border}`,borderRadius:4,padding:0,cursor:"pointer",background:"transparent"}}/></div>
+          {cutShape==="rounded-rect"&&<div style={{flex:1}}><div style={S.label}>Radius (in)</div><input style={S.input} type="number" min="0" max="2" step="0.05" value={cutRadius} onChange={e=>{const v=parseFloat(e.target.value)||0;updActive({cutRadius:v});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutRadius:v})}));}}/></div>}
+        </div>
+      </div>}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
         <span style={{fontSize:10,color:C.muted}}>Auto-rotate for best fit</span>
         <Toggle on={autoRotatePlace} onClick={()=>updActive({autoRotatePlace:!autoRotatePlace})}/>
