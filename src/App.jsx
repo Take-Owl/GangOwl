@@ -145,92 +145,123 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Die-cut: morphological close (dilate→erode) to unify disconnected elements,
-// then circular stamp for uniform offset outline.
-// This bridges gaps between scattered elements into ONE sticker shape.
+// Die-cut: Gaussian blur merges disconnected elements (fixed radius, independent
+// of offset). Circular stamp expands the merged base shape by the offset amount.
+// Two-pass stamp (outer/inner) produces a thin cut line at uniform distance.
 function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   if (!img.complete || !img.naturalWidth) return null;
   const offset = Math.max(1, offsetPx);
-  const pad = Math.ceil(offset + 4);
-  const tw = Math.ceil(w + pad * 2), th = Math.ceil(h + pad * 2);
+  const lw = Math.max(1, lineWidth || 2);
   const iw = Math.ceil(w), ih = Math.ceil(h);
 
-  // Step 1: Get alpha mask from image
-  const c0 = document.createElement("canvas"); c0.width = iw; c0.height = ih;
-  c0.getContext("2d").drawImage(img, 0, 0, iw, ih);
-  const d = c0.getContext("2d").getImageData(0, 0, iw, ih).data;
-  const mask = new Uint8Array(iw * ih);
-  for (let i = 0; i < iw * ih; i++) if (d[i * 4 + 3] > 10) mask[i] = 1;
+  // Fixed blur radius: only for merging elements, NOT tied to offset.
+  // ~6% of image size: tight contours while still bridging nearby elements.
+  // Flood-fill (below) handles any interior holes left by the blur.
+  const blurR = Math.max(5, Math.max(iw, ih) * 0.06);
+  // Padding: blur spread + full offset expansion
+  const pad = Math.ceil(offset + blurR * 2.5 + lw + 4);
+  const tw = Math.ceil(w + pad * 2), th = Math.ceil(h + pad * 2);
 
-  // Step 2: Morphological closing — dilate then erode by a "bridge radius"
-  // The bridge radius should be large enough to connect nearby elements
-  // Use offset * 3 as bridge radius (connects elements within 3x offset distance)
-  const bridgeR = Math.max(3, Math.round(offset * 3));
+  // Step 1: White silhouette of the image on padded canvas
+  const sil = document.createElement("canvas");
+  sil.width = tw; sil.height = th;
+  const sCtx = sil.getContext("2d");
+  sCtx.drawImage(img, pad, pad, iw, ih);
+  sCtx.globalCompositeOperation = "source-in";
+  sCtx.fillStyle = "#fff";
+  sCtx.fillRect(0, 0, tw, th);
+  sCtx.globalCompositeOperation = "source-over";
 
-  // Dilate
-  const dilated = new Uint8Array(iw * ih);
-  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
-    if (mask[y * iw + x]) { dilated[y * iw + x] = 1; continue; }
-    const rSq = bridgeR * bridgeR;
-    for (let dy = -bridgeR; dy <= bridgeR; dy += 2) {
-      for (let dx = -bridgeR; dx <= bridgeR; dx += 2) {
-        if (dx * dx + dy * dy > rSq) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && nx < iw && ny >= 0 && ny < ih && mask[ny * iw + nx]) {
-          dilated[y * iw + x] = 1; dy = bridgeR + 1; break;
-        }
-      }
-    }
+  // Step 2: Gaussian blur to merge disconnected elements into one blob
+  const connected = document.createElement("canvas");
+  connected.width = tw; connected.height = th;
+  const cCtx = connected.getContext("2d");
+  cCtx.filter = `blur(${Math.round(blurR)}px)`;
+  cCtx.drawImage(sil, 0, 0);
+  cCtx.filter = "none";
+  const cData = cCtx.getImageData(0, 0, tw, th);
+  const d = cData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const opaque = d[i + 3] > 20;
+    d[i] = d[i + 1] = d[i + 2] = opaque ? 255 : 0;
+    d[i + 3] = opaque ? 255 : 0;
   }
 
-  // Erode back by same radius (shrink the dilated shape back down)
-  const closed = new Uint8Array(iw * ih);
-  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
-    if (!dilated[y * iw + x]) continue;
-    // A pixel survives erosion only if ALL pixels within bridgeR are also set
-    // Approximation: check if any pixel within bridgeR is NOT set
-    let allSet = true;
-    const rSq = bridgeR * bridgeR;
-    for (let dy = -bridgeR; dy <= bridgeR && allSet; dy += 2) {
-      for (let dx = -bridgeR; dx <= bridgeR && allSet; dx += 2) {
-        if (dx * dx + dy * dy > rSq) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx < 0 || nx >= iw || ny < 0 || ny >= ih || !dilated[ny * iw + nx]) allSet = false;
-      }
-    }
-    if (allSet) closed[y * iw + x] = 1;
+  // Step 2b: Fill interior holes via flood-fill from edges.
+  // Any transparent pixel reachable from the border is exterior.
+  // Remaining transparent pixels are interior holes — fill them.
+  const mask = new Uint8Array(tw * th); // 0=unvisited, 1=exterior
+  const stack = [];
+  // Seed all transparent border pixels
+  for (let x = 0; x < tw; x++) {
+    if (d[(0 * tw + x) * 4 + 3] === 0) stack.push(x);              // top row
+    if (d[((th - 1) * tw + x) * 4 + 3] === 0) stack.push((th - 1) * tw + x); // bottom row
   }
-
-  // Step 3: Create silhouette from the closed (unified) mask
-  const silCanvas = document.createElement("canvas"); silCanvas.width = iw; silCanvas.height = ih;
-  const silCtx = silCanvas.getContext("2d");
-  const silData = silCtx.createImageData(iw, ih);
-  const cr = parseInt((color || "#FF0000").slice(1, 3), 16);
-  const cg = parseInt((color || "#FF0000").slice(3, 5), 16);
-  const cb = parseInt((color || "#FF0000").slice(5, 7), 16);
-  for (let i = 0; i < iw * ih; i++) {
-    if (closed[i]) {
-      silData.data[i * 4] = cr;
-      silData.data[i * 4 + 1] = cg;
-      silData.data[i * 4 + 2] = cb;
-      silData.data[i * 4 + 3] = 255;
+  for (let y = 1; y < th - 1; y++) {
+    if (d[(y * tw) * 4 + 3] === 0) stack.push(y * tw);              // left col
+    if (d[(y * tw + tw - 1) * 4 + 3] === 0) stack.push(y * tw + tw - 1); // right col
+  }
+  for (let i = 0; i < stack.length; i++) mask[stack[i]] = 1;
+  // BFS flood-fill
+  while (stack.length) {
+    const idx = stack.pop();
+    const x = idx % tw, y = (idx - x) / tw;
+    const neighbors = [];
+    if (x > 0) neighbors.push(idx - 1);
+    if (x < tw - 1) neighbors.push(idx + 1);
+    if (y > 0) neighbors.push(idx - tw);
+    if (y < th - 1) neighbors.push(idx + tw);
+    for (const n of neighbors) {
+      if (!mask[n] && d[n * 4 + 3] === 0) { mask[n] = 1; stack.push(n); }
     }
   }
-  silCtx.putImageData(silData, 0, 0);
+  // Fill interior holes (transparent pixels NOT marked as exterior)
+  for (let i = 0; i < tw * th; i++) {
+    if (d[i * 4 + 3] === 0 && !mask[i]) {
+      d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 255;
+      d[i * 4 + 3] = 255;
+    }
+  }
+  cCtx.putImageData(cData, 0, 0);
 
-  // Step 4: Circular stamp of the unified silhouette to create offset outline
-  const result = document.createElement("canvas"); result.width = tw; result.height = th;
+  // Step 3: Union with original silhouette for tight contour detail
+  cCtx.drawImage(sil, 0, 0);
+  // connected canvas is now the unified solid shape (no interior holes)
+
+  // Step 4: Circular stamp for offset expansion — outer ring edge
+  const result = document.createElement("canvas");
+  result.width = tw; result.height = th;
   const rCtx = result.getContext("2d");
-  const steps = Math.max(24, Math.ceil(Math.PI * 2 * offset / 1.2));
-  for (let i = 0; i < steps; i++) {
-    const angle = (i / steps) * Math.PI * 2;
-    rCtx.drawImage(silCanvas, pad + Math.cos(angle) * offset, pad + Math.sin(angle) * offset);
+  const oSteps = Math.max(36, Math.ceil(Math.PI * 2 * offset / 1.5));
+  for (let i = 0; i < oSteps; i++) {
+    const a = (i / oSteps) * Math.PI * 2;
+    rCtx.drawImage(connected, Math.cos(a) * offset, Math.sin(a) * offset);
   }
-  rCtx.drawImage(silCanvas, pad, pad); // fill center
+  rCtx.drawImage(connected, 0, 0);
 
-  // Step 5: Erase the unified closed shape — leaves only the outline ring
+  // Step 5: Color the outer expansion
+  rCtx.globalCompositeOperation = "source-in";
+  rCtx.fillStyle = color || "#FF0000";
+  rCtx.fillRect(0, 0, tw, th);
+  rCtx.globalCompositeOperation = "source-over";
+
+  // Step 6: Subtract inner expansion to produce thin outline of width lw.
+  // Inner = stamp at (offset - lw) distance.
+  const innerR = Math.max(0, offset - lw);
+  const inner = document.createElement("canvas");
+  inner.width = tw; inner.height = th;
+  const iCtx = inner.getContext("2d");
+  if (innerR > 0.5) {
+    const iSteps = Math.max(36, Math.ceil(Math.PI * 2 * innerR / 1.5));
+    for (let i = 0; i < iSteps; i++) {
+      const a = (i / iSteps) * Math.PI * 2;
+      iCtx.drawImage(connected, Math.cos(a) * innerR, Math.sin(a) * innerR);
+    }
+  }
+  iCtx.drawImage(connected, 0, 0);
+
   rCtx.globalCompositeOperation = "destination-out";
-  rCtx.putImageData(silData, pad, pad); // erase the closed shape, not original image
+  rCtx.drawImage(inner, 0, 0);
   rCtx.globalCompositeOperation = "source-over";
 
   return { canvas: result, pad, cw: iw, ch: ih, tw, th };
@@ -909,7 +940,7 @@ export default function GangSheetBuilder() {
   // ── Auto-place ──
   const autoPlace=()=>{
     if(!uploadedImg||!placeW||!placeH) return;
-    const w=parseFloat(placeW),h=parseFloat(placeH),g=(parseFloat(gap)||0)+(cutEnabled?(cutOffset||0)*2:0),n=parseInt(copies)||1,m=parseFloat(margin)||0;
+    const w=parseFloat(placeW),h=parseFloat(placeH),co=cutEnabled?(cutOffset||0):0,dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.06:0,g=(parseFloat(gap)||0)+(co+dieCutExtra)*2,n=parseInt(copies)||1,m=parseFloat(margin)||0;
     let packed=packItems(placements,w,h,g,sheetW,sheetH,n,m);
     let useW=w,useH=h,useRot=rotation;
     if(autoRotatePlace&&w!==h){
@@ -959,7 +990,7 @@ export default function GangSheetBuilder() {
   const doFillSheet=()=>{
     setShowFillConfirm(false);
     if(!groups.length) return;
-    const designs=groups.map(g=>{const gp=placements.find(p=>p.groupId===g.id);const co=gp?.cutEnabled?(gp.cutOffset||0)*2:0;return{w:g.w,h:g.h,gap:(g.gap||gap)+co,src:g.src,groupId:g.id,color:g.color,name:g.name,naturalW:g.naturalW,naturalH:g.naturalH};});
+    const designs=groups.map(g=>{const gp=placements.find(p=>p.groupId===g.id);const co=gp?.cutEnabled?(gp.cutOffset||0):0;const dce=gp?.cutEnabled&&gp?.cutShape==="die-cut"?Math.max(g.w,g.h)*0.06:0;return{w:g.w,h:g.h,gap:(g.gap||gap)+(co+dce)*2,src:g.src,groupId:g.id,color:g.color,name:g.name,naturalW:g.naturalW,naturalH:g.naturalH};});
     const existing=placements.map(p=>({x:p.x,y:p.y,w:p.w,h:p.h}));
     const packed=fillSheet(designs,sheetW,sheetH,parseFloat(margin)||0,existing,autoRotateFill);
     updActive(s=>({placements:[...s.placements,...packed.map(p=>({id:uid(),groupId:p.groupId,color:p.color,src:p.src,name:p.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:p.rotation||0,flipH:false,flipV:false,naturalW:p.naturalW,naturalH:p.naturalH}))]}));
@@ -1157,7 +1188,7 @@ export default function GangSheetBuilder() {
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
         if(p.cutShape==="die-cut"){
           const osPx=spx(p.cutOffset||0);
-          const key=`dc_${p.src.substring(0,40)}_${pw.toFixed(0)}_${ph.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}`;
+          const key=`dc_${p.src.substring(0,40)}_${pw.toFixed(0)}_${ph.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}_${p.cutWidth||1}`;
           if(!dieCutCache.has(key)){
             const r=buildDieCutCanvas(cachedImg(p.src),pw,ph,osPx,p.cutColor,p.cutWidth||1);
             if(r)dieCutCache.set(key,r);
@@ -2068,7 +2099,7 @@ export default function GangSheetBuilder() {
           ))}
         </div>
         <div style={S.row}>
-          <div style={{flex:1}}><div style={S.label}>Offset (in)</div><input style={S.input} type="number" min="0" max="1" step="0.01" value={cutOffset} onChange={e=>{const v=parseFloat(e.target.value)||0;updActive({cutOffset:v});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutOffset:v})}));}}/></div>
+          <div style={{flex:1}}><div style={S.label}>Offset (in)</div><input style={S.input} type="number" min="0" max="1" step="0.1" value={cutOffset} onChange={e=>{const v=parseFloat(e.target.value)||0;updActive({cutOffset:v});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutOffset:v})}));}}/></div>
           <div style={{flex:1}}><div style={S.label}>Width (px)</div><input style={S.input} type="number" min="0.5" max="10" step="0.5" value={cutWidth} onChange={e=>{const v=parseFloat(e.target.value)||1;updActive({cutWidth:v});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,cutWidth:v})}));}}/></div>
         </div>
         <div style={S.row}>
