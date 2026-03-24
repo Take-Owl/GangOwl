@@ -712,6 +712,7 @@ export default function GangSheetBuilder() {
     const onKeyDown=e=>{
       const ka=keyActionRef.current;
       if(e.code==="Space"&&!inInput(e)){e.preventDefault();spaceHeld.current=true;setSpaceDown(true);}
+      if(e.key==="Escape"&&!inInput(e)){ka.setSelected(null);ka.setMultiSelected([]);}
       if(e.key==="v"&&!inInput(e))setActiveTool("select");
       if(e.key==="h"&&!inInput(e))setActiveTool("pan");
       if(e.ctrlKey&&e.key==="r"&&!inInput(e)){e.preventDefault();setShowRulers(r=>!r);}
@@ -938,20 +939,29 @@ export default function GangSheetBuilder() {
   };
 
   // ── Auto-place ──
+  // Expand existing placements by their individual cut offsets so the packer
+  // treats them as larger obstacles, preventing new items from overlapping outlines.
+  const inflateByCut=(pls)=>pls.map(p=>{
+    if(!p.cutEnabled||!p.cutShape||p.cutShape==="none") return p;
+    const co=p.cutOffset||0;
+    const dce=p.cutShape==="die-cut"?Math.max(p.w,p.h)*0.06:0;
+    const expand=co+dce;
+    return {...p,x:p.x-expand,y:p.y-expand,w:p.w+expand*2,h:p.h+expand*2};
+  });
   const autoPlace=()=>{
     if(!uploadedImg||!placeW||!placeH) return;
     const w=parseFloat(placeW),h=parseFloat(placeH),co=cutEnabled?(cutOffset||0):0,dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.06:0,g=(parseFloat(gap)||0)+(co+dieCutExtra)*2,n=parseInt(copies)||1,m=parseFloat(margin)||0;
-    let packed=packItems(placements,w,h,g,sheetW,sheetH,n,m);
+    let packed=packItems(inflateByCut(placements),w,h,g,sheetW,sheetH,n,m);
     let useW=w,useH=h,useRot=rotation;
     if(autoRotatePlace&&w!==h){
-      const packedR=packItems(placements,h,w,g,sheetW,sheetH,n,m);
+      const packedR=packItems(inflateByCut(placements),h,w,g,sheetW,sheetH,n,m);
       if(packedR.length>packed.length){packed=packedR;useW=h;useH=w;useRot=(rotation+90)%360;}
     }
     let warn="";
     if(!packed.length){
       const maxBottom=placements.length?Math.max(...placements.map(p=>p.y+p.h)):0;
       const g2=parseFloat(gap)||0,m2=parseFloat(margin)||0;
-      packed=packItems(placements,useW,useH,g2,sheetW,maxBottom+useH*n+g2*n+m2*2,n,m2);
+      packed=packItems(inflateByCut(placements),useW,useH,g2,sheetW,maxBottom+useH*n+g2*n+m2*2,n,m2);
       if(!packed.length){updActive({warning:"Cannot place."});return;}
       warn="⚠ Placed below canvas — increase sheet height to print";
     }
@@ -991,7 +1001,7 @@ export default function GangSheetBuilder() {
     setShowFillConfirm(false);
     if(!groups.length) return;
     const designs=groups.map(g=>{const gp=placements.find(p=>p.groupId===g.id);const co=gp?.cutEnabled?(gp.cutOffset||0):0;const dce=gp?.cutEnabled&&gp?.cutShape==="die-cut"?Math.max(g.w,g.h)*0.06:0;return{w:g.w,h:g.h,gap:(g.gap||gap)+(co+dce)*2,src:g.src,groupId:g.id,color:g.color,name:g.name,naturalW:g.naturalW,naturalH:g.naturalH};});
-    const existing=placements.map(p=>({x:p.x,y:p.y,w:p.w,h:p.h}));
+    const existing=inflateByCut(placements).map(p=>({x:p.x,y:p.y,w:p.w,h:p.h}));
     const packed=fillSheet(designs,sheetW,sheetH,parseFloat(margin)||0,existing,autoRotateFill);
     updActive(s=>({placements:[...s.placements,...packed.map(p=>({id:uid(),groupId:p.groupId,color:p.color,src:p.src,name:p.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:p.rotation||0,flipH:false,flipV:false,naturalW:p.naturalW,naturalH:p.naturalH}))]}));
   };
@@ -1153,7 +1163,7 @@ export default function GangSheetBuilder() {
     }
     const m=parseFloat(margin)||0;
     if(m>0){const ms=spx(m);ctx.fillStyle="rgba(239,68,68,0.06)";ctx.fillRect(0,0,cw,ms);ctx.fillRect(0,ch-ms,cw,ms);ctx.fillRect(0,ms,ms,ch-ms*2);ctx.fillRect(cw-ms,ms,ms,ch-ms*2);if(showMargin){ctx.strokeStyle="rgba(239,68,68,0.55)";ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(ms,ms,cw-ms*2,ch-ms*2);ctx.setLineDash([]);}}
-    ctx.strokeStyle=C.accentSolid;ctx.lineWidth=2;ctx.strokeRect(0,0,cw,ch);
+    ctx.strokeStyle=C.accentSolid;ctx.lineWidth=2;ctx.strokeRect(1,1,cw-2,ch-2);
     [...placements].reverse().forEach(p=>{
       if(p.visible===false) return; // skip hidden layers
       const px=spx(p.x),py=spx(p.y),pw=spx(p.w),ph=spx(p.h);
@@ -1394,9 +1404,17 @@ export default function GangSheetBuilder() {
     const p=hitTest(x,y);
     if(p){
       if(e.ctrlKey||e.metaKey){
-        // Ctrl+click: toggle in multi-select
-        setMultiSelected(prev=>prev.includes(p.id)?prev.filter(id=>id!==p.id):[...prev,p.id]);
-        if(!selected) setSelected(p.id);
+        // Ctrl+click: toggle in multi-select, deselect if already the only selection
+        if(p.id===selected&&multiSelected.length===0){
+          setSelected(null);
+        } else {
+          setMultiSelected(prev=>{
+            const next=prev.includes(p.id)?prev.filter(id=>id!==p.id):[...prev,p.id];
+            if(p.id===selected&&next.length>0){setSelected(next[0]);return next.filter(id=>id!==next[0]);}
+            if(!selected) setSelected(p.id);
+            return next;
+          });
+        }
       } else {
         // If clicking an already multi-selected item, drag all of them
         const isInMulti=multiSelected.includes(p.id)||p.id===selected;
@@ -2171,7 +2189,7 @@ export default function GangSheetBuilder() {
                 onDrop={e=>{e.preventDefault();setDragOverId(null);if(!dragLayer)return;
                   if(dragLayer.type==="placement"){
                     // Move placement to this group
-                    updActive(s=>({placements:s.placements.map(p=>p.id===dragLayer.id?{...p,groupId:g.id}:p)}));
+                    updActive(s=>({placements:s.placements.map(p=>p.id===dragLayer.id?{...p,groupId:g.id,color:g.color}:p)}));
                   } else if(dragLayer.type==="group"&&dragLayer.id!==g.id){
                     // Reorder groups
                     updActive(s=>{const gs=[...s.groups];const fi=gs.findIndex(x=>x.id===dragLayer.id);const ti=gs.findIndex(x=>x.id===g.id);const[item]=gs.splice(fi,1);gs.splice(ti,0,item);return{groups:gs};});
@@ -2217,7 +2235,7 @@ export default function GangSheetBuilder() {
                       const fi=ps.findIndex(x=>x.id===dragLayer.id);
                       const ti=ps.findIndex(x=>x.id===p.id);
                       const[item]=ps.splice(fi,1);
-                      item.groupId=g.id; // move to target's group
+                      item.groupId=g.id; item.color=g.color; // move to target's group
                       ps.splice(ti,0,item);
                       return{placements:ps};
                     });}
