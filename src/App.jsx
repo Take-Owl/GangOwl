@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import AdSlot, { ExportAd } from "./AdSlot";
-import { isWeb, saveFileWithDialog } from "./edition";
+import { isWeb, saveFileWithDialog, checkForUpdates } from "./edition";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SCREEN_DPI = 96;
@@ -375,6 +375,9 @@ export default function GangSheetBuilder() {
   const isMobile  = bp === "mobile";
   const isTablet  = bp === "tablet";
   const isDesktop = bp === "desktop";
+
+  // ── Check for updates on desktop launch ──
+  useEffect(() => { checkForUpdates(); }, []);
 
   // ── Persisted UI state ──
   // All settings/preferences that should survive a page refresh go here.

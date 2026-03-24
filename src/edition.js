@@ -73,6 +73,31 @@ export async function verifyLicense(licenseKey) {
 
 export const PURCHASE_URL = "https://zcpersonal.gumroad.com/l/duydqm";
 
+// ── Auto-update check (desktop only) ──
+export async function checkForUpdates() {
+  if (!isDesktop) return;
+  try {
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const { ask } = await import("@tauri-apps/plugin-dialog");
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+
+    const update = await check();
+    if (!update) return;
+
+    const yes = await ask(
+      `GangOwl ${update.version} is available. You are currently on an older version.\n\n${update.body || "This update includes bug fixes and improvements."}`,
+      { title: "Update Available", kind: "info", okLabel: "Update Now", cancelLabel: "Later" }
+    );
+
+    if (yes) {
+      await update.downloadAndInstall();
+      await relaunch();
+    }
+  } catch {
+    // Silently fail — updater not available or offline
+  }
+}
+
 // ── Desktop file save with native dialog ──
 export async function saveFileWithDialog(blob, defaultName) {
   if (isDesktop) {
