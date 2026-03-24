@@ -145,117 +145,107 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Die-cut: crisp outline via binary mask dilation at high resolution
-// 1. Render image alpha to a high-res binary mask
-// 2. Dilate the mask by offset (circular structuring element)
-// 3. XOR with original mask to get the outline ring
-// 4. Render as crisp colored pixels
+// Die-cut: marching squares contour trace + thick stroke + redraw image on top
+// Industry-standard approach: trace alpha contour, stroke it, redraw original
 function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   if (!img.complete || !img.naturalWidth) return null;
-  // Use high resolution for crisp output
-  const maxDim = 1024;
-  const sc = Math.min(maxDim / Math.max(img.naturalWidth, img.naturalHeight), w / img.naturalWidth * 4);
-  const iw = Math.max(8, Math.round(img.naturalWidth * sc));
-  const ih = Math.max(8, Math.round(img.naturalHeight * sc));
-  const dilateR = Math.max(1, Math.round(offsetPx * iw / w));
-  const strokeR = Math.max(1, Math.round(lineWidth * iw / w * 0.5));
-  const pad = dilateR + strokeR + 2;
-  const mw = iw + pad * 2, mh = ih + pad * 2;
-  // Render image to get alpha
-  const c1 = document.createElement("canvas"); c1.width = iw; c1.height = ih;
-  c1.getContext("2d").drawImage(img, 0, 0, iw, ih);
-  const d = c1.getContext("2d").getImageData(0, 0, iw, ih).data;
-  // Collect opaque pixels and build filled convex hull
-  // This treats the entire layer as ONE sticker — fills gaps between elements
-  const opaquePoints = [];
-  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
-    if (d[(y * iw + x) * 4 + 3] > 10) opaquePoints.push([x, y]);
-  }
-  const mask = new Uint8Array(mw * mh);
-  if (opaquePoints.length < 3) return null;
-  // Compute convex hull of all visible pixels
-  const hull = (() => {
-    const pts = opaquePoints;
-    let s = 0;
-    for (let i = 1; i < pts.length; i++) if (pts[i][1] > pts[s][1] || (pts[i][1] === pts[s][1] && pts[i][0] < pts[s][0])) s = i;
-    const pivot = pts[s];
-    const sorted = pts.filter((_, i) => i !== s).sort((a, b) => {
-      const aa = Math.atan2(a[1] - pivot[1], a[0] - pivot[0]);
-      const ab = Math.atan2(b[1] - pivot[1], b[0] - pivot[0]);
-      return aa - ab || (Math.hypot(a[0]-pivot[0],a[1]-pivot[1]) - Math.hypot(b[0]-pivot[0],b[1]-pivot[1]));
-    });
-    const st = [pivot];
-    for (const p of sorted) {
-      while (st.length > 1 && (st[st.length-1][0]-st[st.length-2][0])*(p[1]-st[st.length-2][1]) - (st[st.length-1][1]-st[st.length-2][1])*(p[0]-st[st.length-2][0]) <= 0) st.pop();
-      st.push(p);
-    }
-    return st;
-  })();
-  // Fill the convex hull into the padded mask using scanline fill
-  for (let y = 0; y < ih; y++) {
-    const intersections = [];
-    for (let i = 0; i < hull.length; i++) {
-      const [x1, y1] = hull[i], [x2, y2] = hull[(i + 1) % hull.length];
-      if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y)) {
-        const t = (y - y1) / (y2 - y1);
-        intersections.push(Math.round(x1 + t * (x2 - x1)));
-      }
-    }
-    intersections.sort((a, b) => a - b);
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      for (let x = intersections[i]; x <= intersections[i + 1]; x++) {
-        if (x >= 0 && x < iw) mask[(y + pad) * mw + (x + pad)] = 1;
-      }
-    }
-  }
-  // Dilate mask by offset radius
-  const outer = new Uint8Array(mw * mh);
-  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
-    if (mask[y * mw + x]) { outer[y * mw + x] = 1; continue; }
-    const r = dilateR + strokeR;
-    const rSq = r * r;
-    // Sparse check: sample at step intervals for speed
-    const step = Math.max(1, Math.floor(r / 4));
-    for (let dy = -r; dy <= r; dy += step) for (let dx = -r; dx <= r; dx += step) {
-      if (dx * dx + dy * dy > rSq) continue;
-      const nx = x + dx, ny = y + dy;
-      if (nx >= 0 && nx < mw && ny >= 0 && ny < mh && mask[ny * mw + nx]) { outer[y * mw + x] = 1; dy = r + 1; break; }
-    }
-  }
-  // Inner boundary: dilate mask by (offset - strokeWidth) to define inner edge
-  const inner = new Uint8Array(mw * mh);
-  const innerR = Math.max(0, dilateR - strokeR);
-  if (innerR > 0) {
-    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
-      if (mask[y * mw + x]) { inner[y * mw + x] = 1; continue; }
-      const rSq = innerR * innerR;
-      const step = Math.max(1, Math.floor(innerR / 4));
-      for (let dy = -innerR; dy <= innerR; dy += step) for (let dx = -innerR; dx <= innerR; dx += step) {
-        if (dx * dx + dy * dy > rSq) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && nx < mw && ny >= 0 && ny < mh && mask[ny * mw + nx]) { inner[y * mw + x] = 1; dy = innerR + 1; break; }
-      }
-    }
-  } else {
-    inner.set(mask);
-  }
-  // Render: outer minus inner = outline ring
-  const c2 = document.createElement("canvas"); c2.width = mw; c2.height = mh;
+  const pad = Math.ceil(offsetPx + lineWidth + 4);
+  const tw = Math.ceil(w + pad * 2), th = Math.ceil(h + pad * 2);
+  // Step 1: Draw image and get alpha data
+  const c1 = document.createElement("canvas"); c1.width = tw; c1.height = th;
+  const ctx1 = c1.getContext("2d");
+  ctx1.drawImage(img, pad, pad, w, h);
+  const imgData = ctx1.getImageData(0, 0, tw, th).data;
+  // Step 2: Marching squares on the alpha channel to trace all contours
+  const threshold = 10;
+  const isOpaque = (x, y) => x >= 0 && x < tw && y >= 0 && y < th && imgData[(y * tw + x) * 4 + 3] > threshold;
+  // Build a grid of 0/1 values for marching squares (sample every pixel)
+  const contours = marchingSquaresAll(tw, th, isOpaque);
+  if (!contours.length) return null;
+  // Step 3: Create output canvas
+  const c2 = document.createElement("canvas"); c2.width = tw; c2.height = th;
   const ctx2 = c2.getContext("2d");
-  const imgData = ctx2.createImageData(mw, mh);
-  const r = parseInt((color || "#FF0000").slice(1, 3), 16) || 255;
-  const g = parseInt((color || "#FF0000").slice(3, 5), 16) || 0;
-  const b = parseInt((color || "#FF0000").slice(5, 7), 16) || 0;
-  for (let i = 0; i < mw * mh; i++) {
-    if (outer[i] && !inner[i]) {
-      imgData.data[i * 4] = r;
-      imgData.data[i * 4 + 1] = g;
-      imgData.data[i * 4 + 2] = b;
-      imgData.data[i * 4 + 3] = 255;
-    }
+  // Step 4: Stroke all contours with offset*2 width (half inside, half outside = offset outside)
+  ctx2.strokeStyle = color || "#FF0000";
+  ctx2.lineWidth = offsetPx * 2 + (lineWidth || 1);
+  ctx2.lineJoin = "round";
+  ctx2.lineCap = "round";
+  for (const pts of contours) {
+    if (pts.length < 3) continue;
+    ctx2.beginPath();
+    ctx2.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i][0], pts[i][1]);
+    ctx2.closePath();
+    ctx2.stroke();
   }
-  ctx2.putImageData(imgData, 0, 0);
-  return { canvas: c2, pad, cw: iw, ch: ih, tw: mw, th: mh };
+  // Step 5: Redraw original image on top to cover the inner half of the stroke
+  ctx2.drawImage(img, pad, pad, w, h);
+  // Step 6: Clear the original image pixels — keep only the outline ring
+  // Use destination-out to punch the image shape, then draw outline only
+  // Actually, we want: outline ring + NO image (just the cut line)
+  // So: draw the outline, then erase the image area
+  ctx2.globalCompositeOperation = "destination-out";
+  ctx2.drawImage(img, pad, pad, w, h);
+  ctx2.globalCompositeOperation = "source-over";
+  return { canvas: c2, pad, cw: Math.ceil(w), ch: Math.ceil(h), tw, th };
+}
+
+// Marching squares: trace all contours in the alpha field
+function marchingSquaresAll(w, h, isOpaque) {
+  const visited = new Set();
+  const contours = [];
+  // Scan for contour starting points
+  for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) {
+    const tl = isOpaque(x, y) ? 1 : 0;
+    const tr = isOpaque(x+1, y) ? 1 : 0;
+    const bl = isOpaque(x, y+1) ? 1 : 0;
+    const br = isOpaque(x+1, y+1) ? 1 : 0;
+    const config = (tl << 3) | (tr << 2) | (br << 1) | bl;
+    if (config === 0 || config === 15) continue; // all same
+    const key = `${x},${y}`;
+    if (visited.has(key)) continue;
+    // Trace this contour
+    const pts = traceContour(w, h, isOpaque, x, y, visited);
+    if (pts && pts.length >= 3) contours.push(pts);
+  }
+  return contours;
+}
+
+function traceContour(w, h, isOpaque, startX, startY, visited) {
+  const pts = [];
+  let x = startX, y = startY;
+  let prevDir = -1;
+  for (let iter = 0; iter < w * h; iter++) {
+    const key = `${x},${y}`;
+    if (iter > 0 && x === startX && y === startY) break; // closed loop
+    visited.add(key);
+    const tl = (x >= 0 && y >= 0) ? (isOpaque(x, y) ? 1 : 0) : 0;
+    const tr = (x+1 < w && y >= 0) ? (isOpaque(x+1, y) ? 1 : 0) : 0;
+    const bl = (x >= 0 && y+1 < h) ? (isOpaque(x, y+1) ? 1 : 0) : 0;
+    const br = (x+1 < w && y+1 < h) ? (isOpaque(x+1, y+1) ? 1 : 0) : 0;
+    const config = (tl << 3) | (tr << 2) | (br << 1) | bl;
+    if (config === 0 || config === 15) break;
+    // Interpolated edge point (center of cell)
+    pts.push([x + 0.5, y + 0.5]);
+    // Direction: 0=right, 1=down, 2=left, 3=up
+    let dir;
+    switch (config) {
+      case 1: case 5: case 13: dir = 3; break; // up
+      case 2: case 3: case 7: dir = 0; break; // right
+      case 4: case 12: case 14: dir = 1; break; // down
+      case 8: case 10: case 11: dir = 2; break; // left
+      case 6: dir = prevDir === 3 ? 0 : 2; break; // ambiguous
+      case 9: dir = prevDir === 0 ? 3 : 1; break; // ambiguous
+      default: dir = 0;
+    }
+    prevDir = dir;
+    if (dir === 0) x++;
+    else if (dir === 1) y++;
+    else if (dir === 2) x--;
+    else y--;
+    if (x < -1 || x >= w || y < -1 || y >= h) break;
+  }
+  return pts;
 }
 
 const dieCutCache = new Map();
