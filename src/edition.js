@@ -10,6 +10,9 @@ const LICENSE_STORAGE_KEY = "gangowl-license";
 // It looks like "SDGgCnivv6gTTHfVRfUBxQ==" (NOT the permalink "duydqm")
 const GUMROAD_PRODUCT_ID = "0FM6MaQXsIIYF6JZCNX_aw==";
 
+// Developer key for testing — bypasses Gumroad API
+const DEV_KEY = "GANGOWL-DEV-2026-TAKEOWL";
+
 export function getSavedLicense() {
   try {
     const data = localStorage.getItem(LICENSE_STORAGE_KEY);
@@ -26,6 +29,11 @@ export function clearLicense() {
 }
 
 export async function verifyLicense(licenseKey) {
+  // Dev key bypass
+  if (licenseKey === DEV_KEY) {
+    return { valid: true, licenseKey, email: "dev@take-owl.com", uses: 0, purchaseId: "dev" };
+  }
+
   const res = await fetch("https://api.gumroad.com/v2/licenses/verify", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
