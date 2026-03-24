@@ -165,10 +165,48 @@ function buildDieCutCanvas(img, w, h, offsetPx, color, lineWidth) {
   const c1 = document.createElement("canvas"); c1.width = iw; c1.height = ih;
   c1.getContext("2d").drawImage(img, 0, 0, iw, ih);
   const d = c1.getContext("2d").getImageData(0, 0, iw, ih).data;
-  // Binary alpha mask in padded space
-  const mask = new Uint8Array(mw * mh);
+  // Collect opaque pixels and build filled convex hull
+  // This treats the entire layer as ONE sticker — fills gaps between elements
+  const opaquePoints = [];
   for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
-    if (d[(y * iw + x) * 4 + 3] > 10) mask[(y + pad) * mw + (x + pad)] = 1;
+    if (d[(y * iw + x) * 4 + 3] > 10) opaquePoints.push([x, y]);
+  }
+  const mask = new Uint8Array(mw * mh);
+  if (opaquePoints.length < 3) return null;
+  // Compute convex hull of all visible pixels
+  const hull = (() => {
+    const pts = opaquePoints;
+    let s = 0;
+    for (let i = 1; i < pts.length; i++) if (pts[i][1] > pts[s][1] || (pts[i][1] === pts[s][1] && pts[i][0] < pts[s][0])) s = i;
+    const pivot = pts[s];
+    const sorted = pts.filter((_, i) => i !== s).sort((a, b) => {
+      const aa = Math.atan2(a[1] - pivot[1], a[0] - pivot[0]);
+      const ab = Math.atan2(b[1] - pivot[1], b[0] - pivot[0]);
+      return aa - ab || (Math.hypot(a[0]-pivot[0],a[1]-pivot[1]) - Math.hypot(b[0]-pivot[0],b[1]-pivot[1]));
+    });
+    const st = [pivot];
+    for (const p of sorted) {
+      while (st.length > 1 && (st[st.length-1][0]-st[st.length-2][0])*(p[1]-st[st.length-2][1]) - (st[st.length-1][1]-st[st.length-2][1])*(p[0]-st[st.length-2][0]) <= 0) st.pop();
+      st.push(p);
+    }
+    return st;
+  })();
+  // Fill the convex hull into the padded mask using scanline fill
+  for (let y = 0; y < ih; y++) {
+    const intersections = [];
+    for (let i = 0; i < hull.length; i++) {
+      const [x1, y1] = hull[i], [x2, y2] = hull[(i + 1) % hull.length];
+      if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y)) {
+        const t = (y - y1) / (y2 - y1);
+        intersections.push(Math.round(x1 + t * (x2 - x1)));
+      }
+    }
+    intersections.sort((a, b) => a - b);
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      for (let x = intersections[i]; x <= intersections[i + 1]; x++) {
+        if (x >= 0 && x < iw) mask[(y + pad) * mw + (x + pad)] = 1;
+      }
+    }
   }
   // Dilate mask by offset radius
   const outer = new Uint8Array(mw * mh);
