@@ -44,14 +44,20 @@ function AdUnit({ slot, style, format = "auto" }) {
 }
 
 // ── Fallback upsell (shown when ads blocked or no slot configured) ──
+const NAV_LINKS = [
+  { label: "Guide", href: "/guide.html" },
+  { label: "DTF Guide", href: "/dtf-printing.html" },
+  { label: "Die-Cut Guide", href: "/die-cut-stickers.html" },
+  { label: "About", href: "/about.html" },
+];
+
 function Fallback({ variant }) {
   const isBanner = variant === "banner";
   return (
     <div
-      onClick={() => window.open(PURCHASE_URL, "_blank")}
       style={{
         display: "flex", flexDirection: "row",
-        alignItems: "center", justifyContent: "center", cursor: "pointer",
+        alignItems: "center", justifyContent: isBanner ? "space-between" : "center",
         width: "100%", height: "100%",
         background: isBanner ? "linear-gradient(90deg, #13121c, #19182a)" : "linear-gradient(135deg, #13121c 0%, #19182a 100%)",
         border: isBanner ? "none" : "1px solid #1f1e30",
@@ -60,13 +66,25 @@ function Fallback({ variant }) {
         gap: 8, boxSizing: "border-box", userSelect: "none",
       }}
     >
-      <span style={{ fontSize: isBanner ? 11 : 18 }}>🦉</span>
-      <span style={{ fontSize: isBanner ? 9 : 11, color: "#a5b4fc", fontWeight: 700, whiteSpace: "nowrap" }}>
-        Go ad-free
-      </span>
-      <span style={{ fontSize: isBanner ? 9 : 10, color: "#6366f1", whiteSpace: "nowrap" }}>
-        GangOwl Desktop — $11.99
-      </span>
+      {isBanner && (
+        <nav style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {NAV_LINKS.map(l => (
+            <a key={l.href} href={l.href} style={{ fontSize: 9, color: "#6366f1", textDecoration: "none", whiteSpace: "nowrap" }}
+              onMouseEnter={e => e.target.style.color = "#a5b4fc"} onMouseLeave={e => e.target.style.color = "#6366f1"}>
+              {l.label}
+            </a>
+          ))}
+        </nav>
+      )}
+      <div onClick={() => window.open(PURCHASE_URL, "_blank")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <span style={{ fontSize: isBanner ? 11 : 18 }}>🦉</span>
+        <span style={{ fontSize: isBanner ? 9 : 11, color: "#a5b4fc", fontWeight: 700, whiteSpace: "nowrap" }}>
+          Go ad-free
+        </span>
+        <span style={{ fontSize: isBanner ? 9 : 10, color: "#6366f1", whiteSpace: "nowrap" }}>
+          GangOwl Desktop — $11.99
+        </span>
+      </div>
     </div>
   );
 }

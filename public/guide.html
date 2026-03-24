@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+  <!-- SEO -->
+  <title>How to Build a Gang Sheet — Complete Guide | GangOwl</title>
+  <meta name="description" content="Learn how to build gang sheets for DTF, sublimation, and vinyl printing. Covers layout techniques, standard sizes, DPI requirements, file formats, and common mistakes to avoid." />
+  <meta name="keywords" content="gang sheet guide, how to make gang sheet, DTF gang sheet tutorial, gang sheet layout, gang sheet sizes, DTF printing guide, sublimation gang sheet, vinyl gang sheet" />
+  <meta name="author" content="Take-Owl" />
+  <link rel="canonical" href="https://gangowl.com/guide.html" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="How to Build a Gang Sheet — Complete Guide | GangOwl" />
+  <meta property="og:description" content="Learn how to build gang sheets for DTF, sublimation, and vinyl printing. Standard sizes, layout tips, DPI requirements, and more." />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://gangowl.com/guide.html" />
+  <meta property="og:image" content="https://gangowl.com/og-image.png" />
+  <meta property="og:image:width" content="1280" />
+  <meta property="og:image:height" content="720" />
+  <meta property="og:site_name" content="GangOwl" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="How to Build a Gang Sheet — Complete Guide | GangOwl" />
+  <meta name="twitter:description" content="Learn how to build gang sheets for DTF, sublimation, and vinyl printing. Standard sizes, layout tips, DPI requirements, and more." />
+  <meta name="twitter:image" content="https://gangowl.com/og-image.png" />
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "How to Build a Gang Sheet — Complete Guide",
+    "description": "Learn how to build gang sheets for DTF, sublimation, and vinyl printing. Covers layout techniques, standard sizes, DPI requirements, file formats, and common mistakes.",
+    "author": {
+      "@type": "Organization",
+      "name": "Take-Owl",
+      "url": "https://take-owl.com"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "GangOwl",
+      "url": "https://gangowl.com"
+    },
+    "mainEntityOfPage": "https://gangowl.com/guide.html",
+    "datePublished": "2025-06-01",
+    "dateModified": "2026-03-24"
+  }
+  </script>
+
+  <!-- AdSense -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4678796507563996" crossorigin="anonymous"></script>
+
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Theme Variables ── */
+    :root {
+      --bg: #0c0b12;
+      --bg-surface: #14131c;
+      --bg-elevated: #1c1b27;
+      --text: #e2e0ef;
+      --text-muted: #9896a8;
+      --accent: #a5b4fc;
+      --accent-dim: rgba(165, 180, 252, 0.12);
+      --border: #2a2939;
+      --font-mono: 'DM Mono', 'Courier New', monospace;
+      --max-w: 800px;
+      --radius: 8px;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f0f0f5;
+        --bg-surface: #ffffff;
+        --bg-elevated: #e8e8f0;
+        --text: #1a1a2e;
+        --text-muted: #5a5870;
+        --accent: #5b6abf;
+        --accent-dim: rgba(91, 106, 191, 0.1);
+        --border: #d0d0dc;
+      }
+    }
+
+    /* ── Base ── */
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font-mono);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 15px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    a:hover { opacity: 0.8; text-decoration: underline; }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    .nav-brand {
+      font-weight: 700;
+      font-size: 17px;
+      color: var(--text);
+      letter-spacing: -0.5px;
+    }
+    .nav-links {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      font-size: 13px;
+    }
+    .nav-links a { color: var(--text-muted); }
+    .nav-links a:hover, .nav-links a.active { color: var(--accent); }
+
+    /* ── Article ── */
+    main {
+      flex: 1;
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+      width: 100%;
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.25;
+      margin-bottom: 12px;
+      letter-spacing: -0.5px;
+      color: var(--text);
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 40px;
+    }
+
+    h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 16px;
+      color: var(--accent);
+      letter-spacing: -0.3px;
+    }
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-top: 28px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+
+    p { margin-bottom: 16px; }
+
+    ul, ol {
+      margin-bottom: 16px;
+      padding-left: 24px;
+    }
+    li { margin-bottom: 6px; }
+
+    /* ── Info Box ── */
+    .info-box {
+      background: var(--accent-dim);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 14px;
+    }
+    .info-box strong { color: var(--accent); }
+
+    /* ── Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      margin: 20px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    td { color: var(--text-muted); }
+    tr:last-child td { border-bottom: none; }
+
+    /* ── Code ── */
+    code {
+      background: var(--bg-elevated);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    /* ── CTA ── */
+    .cta-block {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      margin: 40px 0;
+      text-align: center;
+    }
+    .cta-block p { margin-bottom: 14px; color: var(--text-muted); }
+    .cta-btn {
+      display: inline-block;
+      background: var(--accent);
+      color: #0c0b12;
+      padding: 10px 28px;
+      border-radius: var(--radius);
+      font-weight: 700;
+      font-size: 14px;
+      font-family: var(--font-mono);
+      transition: opacity 0.15s;
+    }
+    .cta-btn:hover { opacity: 0.85; text-decoration: none; }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 40px;
+    }
+    .toc-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .toc ol { padding-left: 20px; margin-bottom: 0; }
+    .toc li { font-size: 14px; margin-bottom: 4px; }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      background: var(--bg-surface);
+      padding: 28px 24px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .footer-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .footer-links {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .footer-links a { color: var(--text-muted); font-size: 13px; }
+    .footer-links a:hover { color: var(--accent); }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      h1 { font-size: 1.5rem; }
+      h2 { font-size: 1.15rem; }
+      main { padding: 32px 16px 60px; }
+      .nav-inner { padding: 12px 16px; gap: 12px; }
+      .nav-links { gap: 12px; }
+    }
+  </style>
+
+  <!-- Google Fonts: DM Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+
+<body>
+
+  <!-- ── Navigation ── -->
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand">GangOwl</a>
+      <div class="nav-links">
+        <a href="/app.html">App</a>
+        <a href="/guide.html" class="active">Guide</a>
+        <a href="/dtf-printing.html">DTF Guide</a>
+        <a href="/die-cut-stickers.html">Die-Cut Guide</a>
+        <a href="/about.html">About</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Article ── -->
+  <main>
+    <article>
+      <h1>How to Build a Gang Sheet</h1>
+      <p class="subtitle">A complete guide to gang sheet layout for DTF, sublimation, and vinyl printing.</p>
+
+      <!-- Table of Contents -->
+      <div class="toc">
+        <div class="toc-title">Contents</div>
+        <ol>
+          <li><a href="#what-is-a-gang-sheet">What Is a Gang Sheet?</a></li>
+          <li><a href="#why-gang-sheets-save-money">Why Gang Sheets Save Money and Material</a></li>
+          <li><a href="#standard-sizes">Standard Gang Sheet Sizes</a></li>
+          <li><a href="#layout-techniques">How to Lay Out Designs Efficiently</a></li>
+          <li><a href="#dpi-resolution">DPI and Resolution Requirements</a></li>
+          <li><a href="#file-formats">File Format Considerations</a></li>
+          <li><a href="#common-mistakes">Common Mistakes to Avoid</a></li>
+          <li><a href="#automate-with-gangowl">How GangOwl Automates the Process</a></li>
+        </ol>
+      </div>
+
+      <!-- Section 1 -->
+      <h2 id="what-is-a-gang-sheet">1. What Is a Gang Sheet?</h2>
+      <p>
+        A gang sheet is a single print-ready file that contains multiple designs arranged together on one sheet. Instead of printing each design individually, you combine them into a shared layout to maximize the use of available material.
+      </p>
+      <p>
+        The concept originated in commercial printing where multiple jobs are grouped together on a single press sheet to reduce setup time and waste. In the custom apparel world, gang sheets are used across three major workflows:
+      </p>
+      <ul>
+        <li><strong>DTF (Direct to Film)</strong> -- Designs are printed onto PET film, coated with adhesive powder, then heat-pressed onto garments. Gang sheets are essential here because DTF film is sold in fixed-width rolls.</li>
+        <li><strong>Sublimation</strong> -- Dye is transferred from printed paper onto polyester fabric using heat. Grouping designs on one sublimation sheet reduces paper consumption.</li>
+        <li><strong>Vinyl</strong> -- Heat transfer vinyl (HTV) sheets or rolls are cut and weeded before pressing. Combining designs on one vinyl sheet minimizes wasted material and cutting time.</li>
+      </ul>
+      <p>
+        Regardless of the method, the principle is the same: fit as many designs as possible onto a single sheet without overlapping, then print or cut the entire sheet at once.
+      </p>
+
+      <!-- Section 2 -->
+      <h2 id="why-gang-sheets-save-money">2. Why Gang Sheets Save Money and Material</h2>
+      <p>
+        If you are running a print business or fulfilling custom orders, the cost of materials adds up fast. DTF film, sublimation paper, and vinyl are all priced by area. Every square inch of blank space on a sheet is wasted money.
+      </p>
+
+      <h3>Material efficiency</h3>
+      <p>
+        A well-packed gang sheet can achieve 75-90% material utilization, compared to 30-50% when printing designs one at a time. That difference directly impacts your cost per transfer and your margins.
+      </p>
+
+      <h3>Reduced print runs</h3>
+      <p>
+        Fewer sheets means fewer print passes. For DTF printers, this translates to less ink consumption, less powder adhesive, and less time spent feeding film through the printer. For vinyl cutters, fewer cutting sessions means less machine wear.
+      </p>
+
+      <h3>Faster production</h3>
+      <p>
+        Consolidating orders into gang sheets lets you batch your workflow. Print all the transfers at once, cure them together, then sort and fulfill. This batching approach is significantly faster than handling each design as a separate job.
+      </p>
+
+      <div class="info-box">
+        <strong>Example:</strong> A shop processing 40 small chest-logo designs at 4x4 inches each could fit all of them on a single 22x24 gang sheet. Without ganging, the same order might require 10+ individual prints with significant material waste between each one.
+      </div>
+
+      <!-- Section 3 -->
+      <h2 id="standard-sizes">3. Standard Gang Sheet Sizes</h2>
+      <p>
+        Gang sheet dimensions are determined by your printer's capabilities and the material roll width. For DTF printing, the most common roll width is 22 inches. The length is variable, and most gang sheet services offer standard increments.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Size (inches)</th>
+              <th>Common Use</th>
+              <th>Approximate Area</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>22 x 12</td>
+              <td>Small orders, single large design, or a few pocket-size logos</td>
+              <td>264 sq in</td>
+            </tr>
+            <tr>
+              <td>22 x 24</td>
+              <td>Most popular size. Good balance of space and manageability</td>
+              <td>528 sq in</td>
+            </tr>
+            <tr>
+              <td>22 x 36</td>
+              <td>Medium batch orders, mix of sizes</td>
+              <td>792 sq in</td>
+            </tr>
+            <tr>
+              <td>22 x 48</td>
+              <td>Larger batches, full-front and full-back designs</td>
+              <td>1,056 sq in</td>
+            </tr>
+            <tr>
+              <td>22 x 60</td>
+              <td>High-volume orders</td>
+              <td>1,320 sq in</td>
+            </tr>
+            <tr>
+              <td>22 x 72</td>
+              <td>Maximum length for most DTF printers</td>
+              <td>1,584 sq in</td>
+            </tr>
+            <tr>
+              <td>22 x 120</td>
+              <td>Extended length for production printers</td>
+              <td>2,640 sq in</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        For sublimation, common sheet sizes are different and depend on your heat press platen. Standard sublimation paper sizes include 8.5x11, 11x17, and 13x19 inches. Larger format sublimation printers can handle rolls similar to DTF.
+      </p>
+      <p>
+        Vinyl sheets are typically 12 inches wide (for craft cutters) or 24 inches wide (for commercial cutters). Length varies by roll, but gang sheet layouts for vinyl follow the same nesting principles.
+      </p>
+
+      <!-- Section 4 -->
+      <h2 id="layout-techniques">4. How to Lay Out Designs Efficiently</h2>
+      <p>
+        The layout step is where most of the value in gang sheeting comes from. Poor placement wastes material. Strategic placement saves it. Here are the core techniques.
+      </p>
+
+      <h3>Nesting</h3>
+      <p>
+        Nesting is the process of fitting shapes together as tightly as possible, similar to solving a jigsaw puzzle. Rectangular designs are straightforward to nest, but irregularly shaped designs benefit from tighter arrangements where concave areas of one design can accommodate convex parts of another.
+      </p>
+
+      <h3>Rotation</h3>
+      <p>
+        Rotating a design by 90 or 180 degrees can sometimes allow it to fit into a gap that would otherwise be wasted. This is especially effective with tall, narrow designs. Most professional gang sheet tools support automatic rotation testing to find the best fit.
+      </p>
+
+      <h3>Gap management</h3>
+      <p>
+        Leave a consistent gap between designs to prevent bleeding during printing or overlapping during cutting. For DTF printing, a gap of 2-5mm between designs is standard. For vinyl, the gap needs to account for weeding -- typically 5-8mm. The gap should be large enough to separate designs cleanly but small enough to avoid wasting space.
+      </p>
+
+      <h3>Priority placement</h3>
+      <p>
+        Place your largest designs first, then fill in remaining space with smaller ones. This top-down approach tends to produce better utilization than starting with small items. Think of it like packing a suitcase: big items first, small items in the gaps.
+      </p>
+
+      <div class="info-box">
+        <strong>Tip:</strong> If you have multiple copies of the same design at the same size, they will tile perfectly in a grid. Group identical items together and fill the remaining space with mixed sizes.
+      </div>
+
+      <!-- Section 5 -->
+      <h2 id="dpi-resolution">5. DPI and Resolution Requirements</h2>
+      <p>
+        DPI (dots per inch) determines the sharpness of your printed output. For gang sheets, resolution requirements depend on the printing method.
+      </p>
+
+      <h3>DTF printing: 300 DPI</h3>
+      <p>
+        The industry standard for DTF transfers is 300 DPI. This means a 4x4 inch design should be 1200x1200 pixels. Going below 300 DPI results in visible pixelation on the printed transfer, which looks unprofessional on the finished garment.
+      </p>
+
+      <h3>Sublimation: 300 DPI</h3>
+      <p>
+        Sublimation also targets 300 DPI for sharp results. Because sublimation dye spreads slightly during the heat transfer process, some printers recommend working at 300-350 DPI to compensate for this diffusion.
+      </p>
+
+      <h3>Vinyl: 150-300 DPI</h3>
+      <p>
+        For print-and-cut vinyl, 300 DPI is ideal. For cut-only vinyl (solid colors, no printing), resolution is irrelevant because the cutter follows vector paths rather than raster pixels.
+      </p>
+
+      <h3>Calculating pixel dimensions</h3>
+      <p>
+        To determine the pixel dimensions your gang sheet needs, multiply the physical dimensions (in inches) by the DPI. For a 22x24 inch gang sheet at 300 DPI, the final image should be 6,600 x 7,200 pixels. This is a large file, so make sure your software and hardware can handle it.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Sheet Size</th>
+              <th>At 300 DPI</th>
+              <th>Approx. File Size (PNG)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>22 x 12</td>
+              <td>6,600 x 3,600 px</td>
+              <td>15-40 MB</td>
+            </tr>
+            <tr>
+              <td>22 x 24</td>
+              <td>6,600 x 7,200 px</td>
+              <td>30-80 MB</td>
+            </tr>
+            <tr>
+              <td>22 x 36</td>
+              <td>6,600 x 10,800 px</td>
+              <td>50-120 MB</td>
+            </tr>
+            <tr>
+              <td>22 x 48</td>
+              <td>6,600 x 14,400 px</td>
+              <td>60-150 MB</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Section 6 -->
+      <h2 id="file-formats">6. File Format Considerations</h2>
+      <p>
+        The file format you choose for your gang sheet affects quality, compatibility, and file size. Here is what works for each method.
+      </p>
+
+      <h3>PNG with transparency</h3>
+      <p>
+        PNG is the preferred format for DTF gang sheets. It supports full alpha transparency, which is critical because DTF transfers only apply ink where the design exists. The transparent areas of the PNG become the areas where no ink or adhesive is deposited. Always export as PNG-24 with a transparent background, never a white background.
+      </p>
+
+      <h3>JPEG</h3>
+      <p>
+        JPEG does not support transparency, so it is only suitable for sublimation layouts that will cover the entire printable area. JPEG compression also introduces artifacts that can degrade fine detail. If you must use JPEG, set the quality to 95% or higher.
+      </p>
+
+      <h3>PDF</h3>
+      <p>
+        PDF is useful when you need to preserve exact physical dimensions and DPI metadata. Some print shops and RIP software prefer PDF files because they can embed color profiles and maintain dimensional accuracy without relying on the software to interpret DPI settings.
+      </p>
+
+      <h3>TIFF</h3>
+      <p>
+        TIFF supports transparency and lossless compression, making it technically ideal. However, TIFF files are much larger than PNG and not all gang sheet services accept them. PNG is the safer default choice.
+      </p>
+
+      <div class="info-box">
+        <strong>Key point:</strong> For DTF printing, always use PNG with transparency. A white background on a DTF gang sheet will result in a white rectangle being printed around each design, ruining the transfer.
+      </div>
+
+      <!-- Section 7 -->
+      <h2 id="common-mistakes">7. Common Mistakes to Avoid</h2>
+      <p>
+        Even experienced printers make these errors. Watch for them in your workflow.
+      </p>
+
+      <h3>Wrong DPI settings</h3>
+      <p>
+        Designing at screen resolution (72 or 96 DPI) and then exporting for print produces blurry results. Always start your design at 300 DPI. Upscaling a low-resolution design after the fact does not add detail -- it just makes the pixels bigger.
+      </p>
+
+      <h3>White background instead of transparency</h3>
+      <p>
+        This is the most common DTF mistake. If your design has a white background instead of a transparent one, the printer will lay down white ink across the entire rectangular area. Check your export settings and verify the background is transparent before sending to print.
+      </p>
+
+      <h3>Designs too close together</h3>
+      <p>
+        Leaving zero gap between designs causes problems during cutting and weeding. Even if you are not cutting, designs that touch or overlap will merge when pressed. Maintain at least a 2mm gap between all elements.
+      </p>
+
+      <h3>Ignoring bleed and safe area</h3>
+      <p>
+        Designs placed too close to the edge of the gang sheet may get cut off during printing or pressing. Keep all designs at least 3-5mm from the sheet edges.
+      </p>
+
+      <h3>Mirroring when not needed (or forgetting to mirror)</h3>
+      <p>
+        DTF transfers must be printed mirrored because the film is flipped during application. Some RIP software handles mirroring automatically, others do not. Sublimation transfers also need to be mirrored. Vinyl transfers may or may not, depending on the type. Always confirm the mirroring requirements for your specific workflow before exporting.
+      </p>
+
+      <h3>Mismatched color profiles</h3>
+      <p>
+        Designing in RGB and printing on a CMYK printer (or vice versa) causes color shifts. DTF and sublimation printers typically use CMYK with custom ICC profiles. Check with your printer manufacturer for the correct profile and convert your designs accordingly before building the gang sheet.
+      </p>
+
+      <!-- Section 8 -->
+      <h2 id="automate-with-gangowl">8. How GangOwl Automates the Process</h2>
+      <p>
+        Building gang sheets manually in Photoshop or Illustrator is time-consuming. You have to resize, position, and check every design by hand. For shops processing dozens of orders per day, this becomes a bottleneck.
+      </p>
+      <p>
+        <a href="/app.html">GangOwl</a> is a free web-based tool built specifically for gang sheet creation. It handles the layout work automatically so you can focus on production.
+      </p>
+
+      <h3>What GangOwl does</h3>
+      <ul>
+        <li><strong>Auto-placement</strong> -- Drop your design files in, and GangOwl arranges them on the sheet using bin-packing algorithms. It tests rotations and positions to maximize material usage.</li>
+        <li><strong>Custom sheet sizes</strong> -- Choose from standard DTF sizes or define your own dimensions. Set width, height, and DPI to match your printer specifications.</li>
+        <li><strong>Gap control</strong> -- Set a consistent gap between designs. GangOwl enforces this spacing across the entire layout so you do not have to measure manually.</li>
+        <li><strong>Multi-sheet distribution</strong> -- If your designs do not fit on one sheet, GangOwl automatically distributes them across multiple sheets.</li>
+        <li><strong>Export options</strong> -- Export your finished gang sheet as PNG (with transparency), JPEG, WebP, or PDF. Choose the format that works with your RIP software or print service.</li>
+        <li><strong>Die-cut contour lines</strong> -- For sticker printing, GangOwl can generate die-cut outlines around each design for use with print-and-cut workflows.</li>
+      </ul>
+
+      <div class="cta-block">
+        <p>Ready to build your first gang sheet?</p>
+        <a href="/app.html" class="cta-btn">Open GangOwl -- It's Free</a>
+      </div>
+
+      <h3>When to use manual layout vs. automation</h3>
+      <p>
+        Manual layout still makes sense for one-off projects where you need precise artistic control over the arrangement. But for production work -- daily orders, repeat customers, batch fulfillment -- automated tools pay for themselves in time savings on the first day.
+      </p>
+      <p>
+        The ideal workflow is to prepare your individual designs at the correct size and DPI, then use a tool like GangOwl to handle the ganging. This separates the creative work from the mechanical layout step and lets you move faster.
+      </p>
+
+    </article>
+  </main>
+
+  <!-- ── Footer ── -->
+  <footer>
+    <div class="footer-inner">
+      <span>&copy; 2025 GangOwl by Take-Owl</span>
+      <div class="footer-links">
+        <a href="/app.html">App</a>
+        <a href="/guide.html">Guide</a>
+        <a href="/dtf-printing.html">DTF Guide</a>
+        <a href="/die-cut-stickers.html">Die-Cut Guide</a>
+        <a href="/about.html">About</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="/terms.html">Terms</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

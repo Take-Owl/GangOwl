@@ -5,7 +5,7 @@
   "identifier": "com.take-owl.gangowl",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5174",
+    "devUrl": "http://localhost:5174/app.html",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "GangOwl",
+        "url": "app.html",
         "width": 1280,
         "height": 800,
         "resizable": true,

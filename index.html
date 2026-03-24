@@ -1,62 +1,684 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 
-    <!-- SEO -->
-    <title>GangOwl — Free Gang Sheet Builder for DTF, Sublimation & Vinyl</title>
-    <meta name="description" content="Build gang sheets fast with GangOwl. Auto-place designs, smart guides, multi-sheet distribution, and export as PNG, JPEG, WebP, or PDF. Free online tool for DTF, sublimation, and vinyl printing." />
-    <meta name="keywords" content="gang sheet builder, DTF gang sheet, sublimation layout, vinyl cutting layout, gang sheet maker, DTF printing tool, auto place designs, print shop software, gang sheet creator, free gang sheet tool" />
-    <meta name="author" content="Take-Owl" />
-    <link rel="canonical" href="https://gangowl.com" />
+  <!-- SEO -->
+  <title>GangOwl — Free Gang Sheet Builder for DTF, Sublimation, Stickers & Vinyl</title>
+  <meta name="description" content="Build gang sheets fast with GangOwl. Auto-place designs, smart guides, multi-sheet distribution, and export as PNG, JPEG, WebP, or PDF. Free online tool for DTF, sublimation, and vinyl printing." />
+  <meta name="keywords" content="gang sheet builder, DTF gang sheet, sublimation layout, vinyl cutting layout, gang sheet maker, DTF printing tool, auto place designs, print shop software, gang sheet creator, free gang sheet tool" />
+  <meta name="author" content="Take-Owl" />
+  <link rel="canonical" href="https://gangowl.com" />
 
-    <!-- Open Graph (Facebook, LinkedIn, Discord, etc.) -->
-    <meta property="og:title" content="GangOwl — Free Gang Sheet Builder" />
-    <meta property="og:description" content="Auto-place designs onto gang sheets for DTF, sublimation, and vinyl. Smart guides, multi-sheet distribution, PDF export, and more. Free to use." />
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://gangowl.com" />
-    <meta property="og:image" content="https://gangowl.com/og-image.png" />
-    <meta property="og:image:width" content="1280" />
-    <meta property="og:image:height" content="720" />
-    <meta property="og:site_name" content="GangOwl" />
+  <!-- Open Graph (Facebook, LinkedIn, Discord, etc.) -->
+  <meta property="og:title" content="GangOwl — Free Gang Sheet Builder" />
+  <meta property="og:description" content="Auto-place designs onto gang sheets for DTF, sublimation, and vinyl. Smart guides, multi-sheet distribution, PDF export, and more. Free to use." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://gangowl.com" />
+  <meta property="og:image" content="https://gangowl.com/og-image.png" />
+  <meta property="og:image:width" content="1280" />
+  <meta property="og:image:height" content="720" />
+  <meta property="og:site_name" content="GangOwl" />
 
-    <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="GangOwl — Free Gang Sheet Builder" />
-    <meta name="twitter:description" content="Auto-place designs onto gang sheets for DTF, sublimation, and vinyl. Free online tool." />
-    <meta name="twitter:image" content="https://gangowl.com/og-image.png" />
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="GangOwl — Free Gang Sheet Builder" />
+  <meta name="twitter:description" content="Auto-place designs onto gang sheets for DTF, sublimation, and vinyl. Free online tool." />
+  <meta name="twitter:image" content="https://gangowl.com/og-image.png" />
 
-    <!-- Structured Data -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "WebApplication",
-      "name": "GangOwl",
-      "description": "Professional gang sheet builder for DTF, sublimation, and vinyl printing. Auto-place designs, smart guides, multi-sheet distribution, and production-ready export.",
-      "url": "https://gangowl.com",
-      "applicationCategory": "DesignApplication",
-      "operatingSystem": "Web, Windows, macOS",
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD",
-        "description": "Free web version with ads. Desktop version available for $11.99."
-      },
-      "author": {
-        "@type": "Organization",
-        "name": "Take-Owl",
-        "url": "https://take-owl.com"
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "GangOwl",
+    "description": "Professional gang sheet builder for DTF, sublimation, and vinyl printing. Auto-place designs, smart guides, multi-sheet distribution, and production-ready export.",
+    "url": "https://gangowl.com",
+    "applicationCategory": "DesignApplication",
+    "operatingSystem": "Web, Windows, macOS",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD",
+      "description": "Free web version with ads. Desktop version available for $11.99."
+    },
+    "author": {
+      "@type": "Organization",
+      "name": "Take-Owl",
+      "url": "https://take-owl.com"
+    }
+  }
+  </script>
+
+  <!-- AdSense -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4678796507563996" crossorigin="anonymous"></script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0c0b12;
+      --bg-surface: #14131c;
+      --bg-card: #1a1926;
+      --text: #e0dfe8;
+      --text-muted: #9895a8;
+      --accent: #a5b4fc;
+      --accent-solid: #6366f1;
+      --accent-dim: rgba(165, 180, 252, 0.12);
+      --border: #2a2838;
+      --font: 'DM Mono', 'Courier New', monospace;
+      --max-w: 1000px;
+      --max-w-narrow: 800px;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f0f0f5;
+        --bg-surface: #ffffff;
+        --bg-card: #f8f8fc;
+        --text: #1c1b22;
+        --text-muted: #5e5c6b;
+        --accent: #5b6abf;
+        --accent-solid: #4f46e5;
+        --accent-dim: rgba(91, 106, 191, 0.1);
+        --border: #d4d3dc;
       }
     }
-    </script>
 
-    <!-- AdSense -->
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4678796507563996" crossorigin="anonymous"></script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* --- NAV --- */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.5rem;
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      height: 52px;
+      overflow-x: auto;
+    }
+    .nav-logo {
+      font-weight: 500;
+      font-size: 16px;
+      color: var(--text);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .nav-links {
+      display: flex;
+      gap: 1.25rem;
+      list-style: none;
+      white-space: nowrap;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      font-size: 13px;
+      transition: color 0.15s;
+    }
+    .nav-links a:hover,
+    .nav-links a[aria-current="page"] {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .nav-cta {
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-cta a {
+      display: inline-block;
+      background: var(--accent-solid);
+      color: #fff;
+      font-size: 13px;
+      font-family: var(--font);
+      padding: 0.35rem 1rem;
+      border-radius: 5px;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .nav-cta a:hover {
+      opacity: 0.85;
+      text-decoration: none;
+    }
+
+    /* --- SECTIONS --- */
+    .section {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+    }
+    .section-narrow {
+      max-width: var(--max-w-narrow);
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 500;
+      line-height: 1.3;
+      color: var(--text);
+    }
+    h2 {
+      font-size: 1.3rem;
+      font-weight: 500;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+    h3 {
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 0.35rem;
+    }
+    p { margin-bottom: 1rem; }
+
+    .section-heading {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .section-heading p {
+      color: var(--text-muted);
+      font-size: 14px;
+      max-width: 560px;
+      margin: 0.5rem auto 0;
+    }
+
+    /* --- HERO --- */
+    .hero {
+      text-align: center;
+      padding: 5rem 1.5rem 4rem;
+      max-width: var(--max-w);
+      margin: 0 auto;
+    }
+    .hero-logo {
+      font-size: 2.75rem;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.75rem;
+    }
+    .hero-logo .owl {
+      color: var(--accent);
+    }
+    .hero-tagline {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 520px;
+      margin: 0 auto 2rem;
+      line-height: 1.6;
+    }
+    .hero-cta {
+      display: inline-block;
+      background: var(--accent-solid);
+      color: #fff;
+      font-family: var(--font);
+      font-size: 16px;
+      font-weight: 500;
+      padding: 0.85rem 2.5rem;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .hero-cta:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .hero-sub {
+      margin-top: 1rem;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* --- DIVIDER --- */
+    .divider {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+
+    /* --- FEATURES GRID --- */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.25rem;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+    }
+    .feature-card h3 {
+      margin-bottom: 0.4rem;
+    }
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 0;
+      line-height: 1.6;
+    }
+    .feature-label {
+      display: inline-block;
+      font-size: 11px;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    /* --- STEPS --- */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 2rem;
+      text-align: center;
+    }
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-weight: 500;
+      font-size: 16px;
+      margin-bottom: 0.75rem;
+    }
+    .step h3 {
+      margin-bottom: 0.4rem;
+    }
+    .step p {
+      font-size: 14px;
+      color: var(--text-muted);
+      max-width: 280px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    /* --- AUDIENCE --- */
+    .audience-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1.25rem;
+    }
+    .audience-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      text-align: center;
+    }
+    .audience-card h3 {
+      margin-bottom: 0.3rem;
+    }
+    .audience-card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 0;
+      line-height: 1.6;
+    }
+
+    /* --- PRICING COMPARISON --- */
+    .pricing-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 600px) {
+      .pricing-row { grid-template-columns: 1fr; }
+    }
+    .pricing-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2rem 1.5rem;
+    }
+    .pricing-card.highlighted {
+      border-color: var(--accent-solid);
+    }
+    .pricing-price {
+      font-size: 1.75rem;
+      font-weight: 500;
+      color: var(--text);
+      margin: 0.5rem 0;
+    }
+    .pricing-price span {
+      font-size: 14px;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+    .pricing-card ul {
+      list-style: none;
+      margin: 1rem 0 1.5rem;
+      padding: 0;
+    }
+    .pricing-card li {
+      font-size: 14px;
+      color: var(--text-muted);
+      padding: 0.3rem 0;
+      line-height: 1.5;
+    }
+    .pricing-card li::before {
+      content: "+ ";
+      color: var(--accent);
+    }
+    .pricing-btn {
+      display: inline-block;
+      font-family: var(--font);
+      font-size: 14px;
+      padding: 0.6rem 1.5rem;
+      border-radius: 6px;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .pricing-btn:hover {
+      opacity: 0.85;
+      text-decoration: none;
+    }
+    .pricing-btn-primary {
+      background: var(--accent-solid);
+      color: #fff;
+    }
+    .pricing-btn-secondary {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    /* --- BOTTOM CTA --- */
+    .bottom-cta {
+      text-align: center;
+      padding: 4rem 1.5rem;
+      max-width: var(--max-w);
+      margin: 0 auto;
+    }
+    .bottom-cta h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .bottom-cta p {
+      color: var(--text-muted);
+      max-width: 480px;
+      margin: 0 auto 1.5rem;
+      font-size: 14px;
+    }
+
+    /* --- FOOTER --- */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .footer-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+    }
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1.25rem;
+      margin-bottom: 1rem;
+      list-style: none;
+    }
+    .footer-links a {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .footer-links a:hover {
+      color: var(--accent);
+    }
+
+    /* --- RESPONSIVE --- */
+    @media (max-width: 700px) {
+      .hero { padding: 3rem 1.5rem 2.5rem; }
+      .hero-logo { font-size: 2rem; }
+      .hero-tagline { font-size: 1rem; }
+      .section { padding: 2rem 1.25rem; }
+      h1 { font-size: 1.5rem; }
+      h2 { font-size: 1.15rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo" aria-current="page">GangOwl</a>
+      <ul class="nav-links">
+        <li><a href="/guide.html">Guide</a></li>
+        <li><a href="/dtf-printing.html">DTF Guide</a></li>
+        <li><a href="/die-cut-stickers.html">Die-Cut Guide</a></li>
+        <li><a href="/about.html">About</a></li>
+      </ul>
+      <div class="nav-cta">
+        <a href="/app.html">Launch App</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <h1 class="hero-logo">Gang<span class="owl">Owl</span></h1>
+    <p class="hero-tagline">Free Gang Sheet Builder for DTF, Sublimation, Stickers & Vinyl</p>
+    <a href="/app.html" class="hero-cta">Launch the App</a>
+    <p class="hero-sub">No sign-up required. Runs entirely in your browser.</p>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- Features -->
+  <section class="section">
+    <div class="section-heading">
+      <h2>Everything You Need to Build Gang Sheets</h2>
+      <p>GangOwl packs professional layout tools into a free, browser-based workspace. No downloads, no accounts, no learning curve.</p>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <span class="feature-label">Layout</span>
+        <h3>Auto-Place Algorithm</h3>
+        <p>Automatically arrange designs onto your sheet with a bin-packing algorithm that minimizes wasted space. Supports configurable spacing between items and respects your chosen sheet dimensions.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-label">Production</span>
+        <h3>Die-Cut Contour Lines</h3>
+        <p>Generate CutContour paths around your designs for use with cutting plotters and print-and-cut workflows. Contours follow the shape of your artwork with adjustable offset distance.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-label">Workflow</span>
+        <h3>Multi-Sheet Distribution</h3>
+        <p>When your designs exceed a single sheet, GangOwl automatically distributes them across multiple sheets. Each sheet is independently exportable and maintains the same dimensions and settings.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-label">Precision</span>
+        <h3>Smart Guides & Snapping</h3>
+        <p>Align designs precisely with smart guides that appear as you drag items across the canvas. Snap to edges, centers, and other elements for pixel-perfect placement every time.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-label">Export</span>
+        <h3>PNG, JPEG, WebP & PDF</h3>
+        <p>Export your finished gang sheets in the format your workflow demands. Set custom DPI values from 72 to 600 for print-ready output. PDF export preserves vector-quality contour lines.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-label">Editing</span>
+        <h3>Cut Lines & Visual Guides</h3>
+        <p>Add registration marks and visible cut lines to your exported sheets. Toggle them on or off depending on whether your cutter reads them from the printed output or from a separate file.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-label">Import</span>
+        <h3>Drag & Drop Upload</h3>
+        <p>Add designs by dragging image files directly onto the canvas. Supports PNG, JPEG, WebP, and SVG formats. Each image can be individually resized, rotated, duplicated, or removed.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-label">Control</span>
+        <h3>Custom DPI & Sheet Sizes</h3>
+        <p>Choose from common DTF film sizes (13x19, 22x24, A3, A4) or enter custom dimensions in inches or centimeters. Set your target DPI to match your printer's native resolution.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- How It Works -->
+  <section class="section">
+    <div class="section-heading">
+      <h2>How It Works</h2>
+      <p>Three steps from artwork files to a production-ready gang sheet.</p>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Upload Your Designs</h3>
+        <p>Drag and drop your artwork files onto the canvas or use the file picker. PNG files with transparency work best for DTF and vinyl workflows.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Set Your Sheet Size</h3>
+        <p>Pick a standard film size or enter custom dimensions. Configure spacing, DPI, and whether you need die-cut contour lines for your cutter.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Auto-Place & Export</h3>
+        <p>Hit the auto-place button to fill your sheet efficiently. Fine-tune positions if needed, then export as PNG or PDF at your chosen resolution.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- Who It's For -->
+  <section class="section">
+    <div class="section-heading">
+      <h2>Built for Print Professionals</h2>
+      <p>GangOwl is designed for anyone who arranges multiple designs onto a single sheet before printing or cutting.</p>
+    </div>
+
+    <div class="audience-grid">
+      <div class="audience-card">
+        <h3>DTF Printers</h3>
+        <p>Maximize film usage by fitting as many transfers as possible onto each sheet. Export at 300+ DPI for sharp, detailed prints on DTF film.</p>
+      </div>
+      <div class="audience-card">
+        <h3>Sublimation Shops</h3>
+        <p>Lay out sublimation transfers for mugs, tumblers, shirts, and more. Reduce paper waste by ganging multiple designs on a single press sheet.</p>
+      </div>
+      <div class="audience-card">
+        <h3>Vinyl Cutters</h3>
+        <p>Arrange heat transfer vinyl designs with proper spacing for weeding. Export with contour lines so your plotter cuts each design precisely.</p>
+      </div>
+      <div class="audience-card">
+        <h3>Sticker Makers</h3>
+        <p>Create sticker sheets with die-cut outlines around each design. Print on sticker paper and use a cutting machine for professional results.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- Web vs Desktop -->
+  <section class="section">
+    <div class="section-heading">
+      <h2>Web App vs Desktop App</h2>
+      <p>The same powerful tool, available two ways. Pick what works for your setup.</p>
+    </div>
+
+    <div class="pricing-row">
+      <div class="pricing-card">
+        <h3>Web Version</h3>
+        <div class="pricing-price">Free <span>/ forever</span></div>
+        <ul>
+          <li>All layout and export features</li>
+          <li>Auto-place, smart guides, multi-sheet</li>
+          <li>Die-cut contour generation</li>
+          <li>PNG, JPEG, WebP, and PDF export</li>
+          <li>Custom DPI up to 600</li>
+          <li>Runs in any modern browser</li>
+          <li>Ad-supported</li>
+        </ul>
+        <a href="/app.html" class="pricing-btn pricing-btn-primary">Open Web App</a>
+      </div>
+
+      <div class="pricing-card highlighted">
+        <h3>Desktop Version</h3>
+        <div class="pricing-price">$11.99 <span>/ one-time</span></div>
+        <ul>
+          <li>Everything in the web version</li>
+          <li>No ads, no distractions</li>
+          <li>Works offline, no internet needed</li>
+          <li>Native Windows and macOS app</li>
+          <li>Faster performance for large sheets</li>
+          <li>Automatic updates included</li>
+          <li>Support independent development</li>
+        </ul>
+        <a href="https://gangowl.gumroad.com/l/gangowl-desktop" class="pricing-btn pricing-btn-secondary" target="_blank" rel="noopener">Get Desktop App</a>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- Bottom CTA -->
+  <section class="bottom-cta">
+    <h2>Ready to Build Your Gang Sheet?</h2>
+    <p>Open the app and start placing designs in seconds. No account needed, no software to install, no limitations on sheet count.</p>
+    <a href="/app.html" class="hero-cta">Launch GangOwl</a>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="/app.html">Launch App</a></li>
+        <li><a href="/guide.html">Guide</a></li>
+        <li><a href="/dtf-printing.html">DTF Guide</a></li>
+        <li><a href="/die-cut-stickers.html">Die-Cut Guide</a></li>
+        <li><a href="/about.html">About</a></li>
+        <li><a href="/privacy.html">Privacy</a></li>
+        <li><a href="/terms.html">Terms</a></li>
+      </ul>
+      <p>GangOwl by <a href="https://take-owl.com">Take-Owl</a></p>
+      <p style="margin-top:6px">Bug reports and help: <a href="mailto:hello@take-owl.com">hello@take-owl.com</a></p>
+    </div>
+  </footer>
+
+</body>
 </html>
