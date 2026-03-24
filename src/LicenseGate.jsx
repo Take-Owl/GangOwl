@@ -18,11 +18,17 @@ export default function LicenseGate({ children }) {
   }, []);
 
   const handleVerify = async () => {
-    if (!input.trim()) { setError("Enter your email or license key."); return; }
+    const key = input.trim();
+    if (!key) { setError("Please enter your license key."); return; }
     setVerifying(true); setError("");
     try {
-      const result = await verifyLicense(input.trim());
-      saveLicense({ valid: true, email: result.email, verifiedAt: new Date().toISOString() });
+      const result = await verifyLicense(key);
+      saveLicense({
+        valid: true,
+        licenseKey: result.licenseKey,
+        email: result.email,
+        verifiedAt: new Date().toISOString(),
+      });
       setLicensed(true);
     } catch (e) {
       setError(e.message || "Verification failed.");
@@ -42,7 +48,7 @@ export default function LicenseGate({ children }) {
     }}>
       <div style={{
         background: "#13121c", border: "1px solid #1f1e30", borderRadius: 12,
-        padding: "40px 36px", maxWidth: 400, width: "90%", textAlign: "center",
+        padding: "40px 36px", maxWidth: 420, width: "90%", textAlign: "center",
       }}>
         <div style={{ fontSize: 32, marginBottom: 8 }}>🦉</div>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: "#a5b4fc", margin: "0 0 4px" }}>
@@ -50,28 +56,34 @@ export default function LicenseGate({ children }) {
         </h1>
         <p style={{ fontSize: 12, color: "#3d3b60", marginBottom: 24 }}>Desktop Edition</p>
 
-        <p style={{ fontSize: 13, color: "#e2e0ff", lineHeight: 1.6, marginBottom: 20 }}>
-          Enter the email you used to purchase, or your license key.
+        <p style={{ fontSize: 13, color: "#e2e0ff", lineHeight: 1.6, marginBottom: 8 }}>
+          Enter your license key to activate.
+        </p>
+        <p style={{ fontSize: 10, color: "#3d3b60", marginBottom: 20, lineHeight: 1.5 }}>
+          You received a license key in your Gumroad purchase receipt.
+          <br />It looks like: A1B2C3D4-E5F60718-9ABCDEF0-1234ABCD
         </p>
 
         <input
           type="text"
-          placeholder="Email or license key"
+          placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleVerify()}
           style={{
-            width: "100%", padding: "10px 12px", fontSize: 13,
+            width: "100%", padding: "12px 14px", fontSize: 14,
             background: "#0c0b12", border: "1px solid #1f1e30", borderRadius: 6,
             color: "#e2e0ff", outline: "none", marginBottom: 12,
-            boxSizing: "border-box",
+            boxSizing: "border-box", fontFamily: "monospace",
+            letterSpacing: "0.05em", textAlign: "center",
           }}
         />
 
         {error && (
           <div style={{
             fontSize: 11, color: "#ef4444", marginBottom: 12,
-            padding: "8px", background: "#1a0a0a", borderRadius: 4,
+            padding: "8px 12px", background: "#1a0a0a", borderRadius: 4,
+            lineHeight: 1.5,
           }}>
             {error}
           </div>
