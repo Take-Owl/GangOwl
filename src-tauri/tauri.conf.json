@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/nicedoc.io/master/.schema/tauri-conf-v2.json",
   "productName": "GangOwl",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "identifier": "com.take-owl.gangowl",
   "build": {
     "frontendDist": "../dist",
@@ -24,23 +24,8 @@
       "csp": null
     }
   },
-  "plugins": {
-    "fs": {
-      "scope": { "allow": ["**"] }
-    },
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2NzMyMUMzNUYzNTBBOTIKUldTU0NqVmZ3eUZ6OXUrYmxkMEM3T1VpMGptMkU0QmtUZGRzWWJ0R0dPM1krTWtvcTQ2SVJwdkIK",
-      "endpoints": [
-        "https://github.com/Take-Owl/GangOwl/releases/latest/download/latest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
-    }
-  },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
