@@ -145,79 +145,93 @@ function buildShapePath(shape, img, w, h, offsetPx, radiusPx) {
   return path;
 }
 
-// Convex hull for die-cut — wraps ALL visible content with uniform offset
+// Die-cut: dilate alpha mask then trace the actual boundary (not convex hull)
+// The mask is padded so cut lines can extend beyond placement bounds
 function buildDieCutPath(img, w, h, offsetPx) {
   if (!img.complete || !img.naturalWidth) return null;
   const maxDim = 256;
   const sc = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
-  const sw = Math.max(4, Math.round(img.naturalWidth * sc));
-  const sh = Math.max(4, Math.round(img.naturalHeight * sc));
-  const cv = document.createElement("canvas"); cv.width = sw; cv.height = sh;
-  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0, sw, sh);
-  const d = ctx.getImageData(0, 0, sw, sh).data;
-  // Build binary alpha mask
-  const mask = new Uint8Array(sw * sh);
-  for (let i = 0; i < sw * sh; i++) if (d[i * 4 + 3] > 10) mask[i] = 1;
-  // Dilate mask by offset FIRST (uniform expansion around all content)
-  const dilateR = Math.max(0, Math.round(offsetPx * sw / w));
-  let src = mask;
-  if (dilateR > 0) {
-    const dst = new Uint8Array(sw * sh);
-    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-      if (src[y * sw + x]) { dst[y * sw + x] = 1; continue; }
-      outer: for (let dy = -dilateR; dy <= dilateR; dy++) for (let dx = -dilateR; dx <= dilateR; dx++) {
-        if (dx * dx + dy * dy > dilateR * dilateR) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && nx < sw && ny >= 0 && ny < sh && src[ny * sw + nx]) { dst[y * sw + x] = 1; break outer; }
+  const iw = Math.max(4, Math.round(img.naturalWidth * sc));
+  const ih = Math.max(4, Math.round(img.naturalHeight * sc));
+  const dilateR = Math.max(1, Math.round(offsetPx * iw / w));
+  // Pad the mask so dilation can extend beyond image bounds
+  const pad = dilateR + 2;
+  const mw = iw + pad * 2, mh = ih + pad * 2;
+  const cv = document.createElement("canvas"); cv.width = iw; cv.height = ih;
+  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0, iw, ih);
+  const d = ctx.getImageData(0, 0, iw, ih).data;
+  // Build padded alpha mask
+  const mask = new Uint8Array(mw * mh);
+  for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
+    if (d[(y * iw + x) * 4 + 3] > 10) mask[(y + pad) * mw + (x + pad)] = 1;
+  }
+  // Dilate
+  const dilated = new Uint8Array(mw * mh);
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+    if (mask[y * mw + x]) { dilated[y * mw + x] = 1; continue; }
+    outer: for (let dy = -dilateR; dy <= dilateR; dy++) for (let dx = -dilateR; dx <= dilateR; dx++) {
+      if (dx * dx + dy * dy > dilateR * dilateR) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < mw && ny >= 0 && ny < mh && mask[ny * mw + nx]) { dilated[y * mw + x] = 1; break outer; }
+    }
+  }
+  // Moore neighborhood contour trace on dilated mask
+  const g = (x, y) => x >= 0 && x < mw && y >= 0 && y < mh ? dilated[y * mw + x] : 0;
+  let sx = -1, sy = -1;
+  for (let y = 0; y < mh && sx < 0; y++) for (let x = 0; x < mw && sx < 0; x++) {
+    if (g(x, y) && !g(x, y - 1)) { sx = x; sy = y; }
+  }
+  if (sx < 0) return null;
+  const dx8 = [1, 1, 0, -1, -1, -1, 0, 1];
+  const dy8 = [0, 1, 1, 1, 0, -1, -1, -1];
+  const contour = [[sx, sy]];
+  let cx2 = sx, cy2 = sy, dir = 7;
+  for (let iter = 0; iter < mw * mh * 2; iter++) {
+    let found = false;
+    const startDir = (dir + 5) % 8;
+    for (let i = 0; i < 8; i++) {
+      const d2 = (startDir + i) % 8;
+      const nx = cx2 + dx8[d2], ny = cy2 + dy8[d2];
+      if (g(nx, ny)) {
+        cx2 = nx; cy2 = ny; dir = d2;
+        if (cx2 === sx && cy2 === sy) { found = true; break; }
+        contour.push([cx2, cy2]);
+        found = true; break;
       }
     }
-    src = dst;
+    if (!found || (cx2 === sx && cy2 === sy)) break;
   }
-  // Collect boundary pixels of the dilated mask
-  const edgePts = [];
-  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-    if (!src[y * sw + x]) continue;
-    if (x === 0 || y === 0 || x === sw-1 || y === sh-1 ||
-      !src[(y-1)*sw+x] || !src[(y+1)*sw+x] || !src[y*sw+x-1] || !src[y*sw+x+1])
-      edgePts.push([x, y]);
-  }
-  if (edgePts.length < 3) return null;
-  // Convex hull of dilated boundary
-  const hull = convexHull(edgePts);
-  if (hull.length < 3) return null;
-  // Convert to placement-local coords
+  if (contour.length < 3) return null;
+  // Simplify
+  const simp = dpSimplify(contour, Math.max(0.5, 1.5 / sc));
+  // Convert padded mask coords to placement-local coords (centered, may exceed -w/2..w/2)
   const path = new Path2D();
-  for (let i = 0; i < hull.length; i++) {
-    const px = (hull[i][0] / sw - 0.5) * w;
-    const py = (hull[i][1] / sh - 0.5) * h;
+  for (let i = 0; i < simp.length; i++) {
+    const px = ((simp[i][0] - pad) / iw - 0.5) * w;
+    const py = ((simp[i][1] - pad) / ih - 0.5) * h;
     if (i === 0) path.moveTo(px, py); else path.lineTo(px, py);
   }
   path.closePath();
   return path;
 }
 
-function convexHull(points) {
-  if (points.length < 3) return points;
-  // Find lowest point (then leftmost)
-  let start = 0;
-  for (let i = 1; i < points.length; i++) {
-    if (points[i][1] > points[start][1] || (points[i][1] === points[start][1] && points[i][0] < points[start][0])) start = i;
+function dpSimplify(pts, epsilon) {
+  if (pts.length <= 2) return pts;
+  let maxD = 0, idx = 0;
+  const [a, b] = [pts[0], pts[pts.length - 1]];
+  const lenSq = (b[0]-a[0])**2 + (b[1]-a[1])**2;
+  for (let i = 1; i < pts.length - 1; i++) {
+    let d;
+    if (lenSq === 0) d = Math.sqrt((pts[i][0]-a[0])**2 + (pts[i][1]-a[1])**2);
+    else d = Math.abs((b[1]-a[1])*pts[i][0] - (b[0]-a[0])*pts[i][1] + b[0]*a[1] - b[1]*a[0]) / Math.sqrt(lenSq);
+    if (d > maxD) { maxD = d; idx = i; }
   }
-  const pivot = points[start];
-  const sorted = points.filter((_, i) => i !== start).sort((a, b) => {
-    const angA = Math.atan2(a[1] - pivot[1], a[0] - pivot[0]);
-    const angB = Math.atan2(b[1] - pivot[1], b[0] - pivot[0]);
-    return angA - angB || (Math.hypot(a[0]-pivot[0],a[1]-pivot[1]) - Math.hypot(b[0]-pivot[0],b[1]-pivot[1]));
-  });
-  const stack = [pivot];
-  for (const p of sorted) {
-    while (stack.length > 1) {
-      const a = stack[stack.length - 2], b = stack[stack.length - 1];
-      if ((b[0]-a[0])*(p[1]-a[1]) - (b[1]-a[1])*(p[0]-a[0]) <= 0) stack.pop(); else break;
-    }
-    stack.push(p);
+  if (maxD > epsilon) {
+    const l = dpSimplify(pts.slice(0, idx + 1), epsilon);
+    const r = dpSimplify(pts.slice(idx), epsilon);
+    return [...l.slice(0, -1), ...r];
   }
-  return stack;
+  return [a, b];
 }
 
 function getCutContour(src, shape, w, h, offsetPx, radiusPx) {
