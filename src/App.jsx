@@ -77,6 +77,291 @@ function fillSheet(designs, sW, sH, margin, existing=[], autoRotate=false) {
   return all.slice(existing.length);
 }
 
+// ─── Content-aware nesting (raster mask approach) ────────────────────────────
+// Resolution: pixels per inch in the nesting grid. Lower = faster, coarser.
+const NEST_PPI = 30; // 30 pixels per inch → ~0.033" resolution
+
+// Extract a binary alpha mask from an image at nesting resolution
+function extractMask(img, wIn, hIn, rotation=0) {
+  const pw = Math.ceil(wIn * NEST_PPI), ph = Math.ceil(hIn * NEST_PPI);
+  const c = document.createElement("canvas");
+  const isRot = rotation === 90 || rotation === 270;
+  const cw = isRot ? ph : pw, ch = isRot ? pw : ph;
+  c.width = cw; c.height = ch;
+  const ctx = c.getContext("2d");
+  if (rotation) {
+    ctx.translate(cw / 2, ch / 2);
+    ctx.rotate(rotation * Math.PI / 180);
+    ctx.translate(-pw / 2, -ph / 2);
+  }
+  ctx.drawImage(img, 0, 0, pw, ph);
+  const data = ctx.getImageData(0, 0, cw, ch).data;
+  const mask = new Uint8Array(cw * ch);
+  for (let i = 0; i < mask.length; i++) {
+    if (data[i * 4 + 3] > 20) mask[i] = 1;
+  }
+  return { mask, w: cw, h: ch };
+}
+
+// ─── Clean mask generation for nesting ───────────────────────────────────────
+// Every mask returns { mask, w, h, contentOffsetX, contentOffsetY }
+// contentOffset = grid pixels from mask top-left to content (0,0)
+
+function buildItemMask(img, wIn, hIn, cutEnabled, cutShape, cutOffset, cutRadius, rotation) {
+  const rot = rotation || 0;
+  if (!cutEnabled || !cutShape || cutShape === "none") {
+    const m = extractMask(img, wIn, hIn, rot);
+    return { mask: m.mask, w: m.w, h: m.h, contentOffsetX: 0, contentOffsetY: 0 };
+  }
+  if (cutShape === "die-cut") {
+    return buildDieCutMaskClean(img, wIn, hIn, cutOffset, rot);
+  }
+  return buildShapeMask(img, wIn, hIn, cutShape, cutOffset, cutRadius || 0, rot);
+}
+
+// Die-cut: render contour at 2x resolution, downscale for accuracy
+function buildDieCutMaskClean(img, wIn, hIn, cutOffsetIn, rotation) {
+  const RENDER = NEST_PPI * 2; // 60 PPI for quality
+  const pw = Math.ceil(wIn * RENDER), ph = Math.ceil(hIn * RENDER);
+  const offsetPx = cutOffsetIn * RENDER;
+  const blurR = Math.max(5, Math.max(pw, ph) * 0.06);
+  const pad = Math.ceil(offsetPx + blurR * 2.5 + 4);
+  const tw = pw + pad * 2, th = ph + pad * 2;
+  // Step 1: white silhouette
+  const sil = document.createElement("canvas"); sil.width = tw; sil.height = th;
+  const s = sil.getContext("2d");
+  s.drawImage(img, pad, pad, pw, ph);
+  s.globalCompositeOperation = "source-in"; s.fillStyle = "#fff"; s.fillRect(0, 0, tw, th);
+  s.globalCompositeOperation = "source-over";
+  // Step 2: blur + threshold
+  const con = document.createElement("canvas"); con.width = tw; con.height = th;
+  const c = con.getContext("2d");
+  c.filter = `blur(${Math.round(blurR)}px)`; c.drawImage(sil, 0, 0); c.filter = "none";
+  const cd = c.getImageData(0, 0, tw, th); const d = cd.data;
+  for (let i = 0; i < d.length; i += 4) { const op = d[i+3] > 20; d[i]=d[i+1]=d[i+2]=op?255:0; d[i+3]=op?255:0; }
+  // Flood-fill interior holes
+  const fm = new Uint8Array(tw * th), fs = [];
+  for (let x=0;x<tw;x++){if(d[x*4+3]===0)fs.push(x);if(d[((th-1)*tw+x)*4+3]===0)fs.push((th-1)*tw+x);}
+  for (let y=1;y<th-1;y++){if(d[(y*tw)*4+3]===0)fs.push(y*tw);if(d[(y*tw+tw-1)*4+3]===0)fs.push(y*tw+tw-1);}
+  for (let i=0;i<fs.length;i++) fm[fs[i]]=1;
+  while(fs.length){const idx=fs.pop();const x=idx%tw,y=(idx-x)/tw;
+    if(x>0&&!fm[idx-1]&&d[(idx-1)*4+3]===0){fm[idx-1]=1;fs.push(idx-1);}
+    if(x<tw-1&&!fm[idx+1]&&d[(idx+1)*4+3]===0){fm[idx+1]=1;fs.push(idx+1);}
+    if(y>0&&!fm[idx-tw]&&d[(idx-tw)*4+3]===0){fm[idx-tw]=1;fs.push(idx-tw);}
+    if(y<th-1&&!fm[idx+tw]&&d[(idx+tw)*4+3]===0){fm[idx+tw]=1;fs.push(idx+tw);}
+  }
+  for(let i=0;i<tw*th;i++){if(d[i*4+3]===0&&!fm[i]){d[i*4]=d[i*4+1]=d[i*4+2]=255;d[i*4+3]=255;}}
+  c.putImageData(cd, 0, 0); c.drawImage(sil, 0, 0);
+  // Step 4: circular stamp (FILLED outer expansion)
+  const st = document.createElement("canvas"); st.width = tw; st.height = th;
+  const sc = st.getContext("2d");
+  const steps = Math.max(36, Math.ceil(Math.PI * 2 * offsetPx / 1.5));
+  for (let i = 0; i < steps; i++) { const a = (i / steps) * Math.PI * 2; sc.drawImage(con, Math.cos(a) * offsetPx, Math.sin(a) * offsetPx); }
+  sc.drawImage(con, 0, 0);
+  // Downscale 2x to NEST_PPI, apply rotation
+  const nw = Math.ceil(tw / 2), nh = Math.ceil(th / 2);
+  const isRot = rotation === 90 || rotation === 270;
+  const outW = isRot ? nh : nw, outH = isRot ? nw : nh;
+  const out = document.createElement("canvas"); out.width = outW; out.height = outH;
+  const o = out.getContext("2d");
+  if (rotation) { o.translate(outW/2, outH/2); o.rotate(rotation * Math.PI / 180); o.translate(-nw/2, -nh/2); }
+  o.drawImage(st, 0, 0, tw, th, 0, 0, nw, nh);
+  const fd = o.getImageData(0, 0, outW, outH).data;
+  const mask = new Uint8Array(outW * outH);
+  for (let i = 0; i < mask.length; i++) { if (fd[i*4+3] > 10) mask[i] = 1; }
+  // contentOffset: image was drawn at (pad, pad) in render space. In grid space that's pad/2.
+  const co = Math.round(pad / 2);
+  return { mask, w: outW, h: outH, contentOffsetX: co, contentOffsetY: co };
+}
+
+// Geometric cuts (rect, rounded-rect, circle): render filled shape path at NEST_PPI
+function buildShapeMask(img, wIn, hIn, cutShape, cutOffsetIn, cutRadius, rotation) {
+  const cw = Math.ceil(wIn * NEST_PPI), ch = Math.ceil(hIn * NEST_PPI);
+  const oPx = Math.ceil(cutOffsetIn * NEST_PPI);
+  const mw = cw + oPx * 2, mh = ch + oPx * 2;
+  const isRot = rotation === 90 || rotation === 270;
+  const outW = isRot ? mh : mw, outH = isRot ? mw : mh;
+  const cv = document.createElement("canvas"); cv.width = outW; cv.height = outH;
+  const ctx = cv.getContext("2d");
+  ctx.translate(outW / 2, outH / 2);
+  if (rotation) ctx.rotate(rotation * Math.PI / 180);
+  // Fill the cut shape area (content bounds assumed to fill the placement box)
+  ctx.fillStyle = "#fff";
+  const rPx = (cutRadius || 0) * NEST_PPI;
+  if (cutShape === "rectangle") {
+    ctx.fillRect(-mw/2, -mh/2, mw, mh);
+  } else if (cutShape === "rounded-rect") {
+    const r = Math.min(rPx, mw/2, mh/2);
+    ctx.beginPath();
+    ctx.moveTo(-mw/2+r, -mh/2); ctx.lineTo(mw/2-r, -mh/2); ctx.arcTo(mw/2, -mh/2, mw/2, -mh/2+r, r);
+    ctx.lineTo(mw/2, mh/2-r); ctx.arcTo(mw/2, mh/2, mw/2-r, mh/2, r);
+    ctx.lineTo(-mw/2+r, mh/2); ctx.arcTo(-mw/2, mh/2, -mw/2, mh/2-r, r);
+    ctx.lineTo(-mw/2, -mh/2+r); ctx.arcTo(-mw/2, -mh/2, -mw/2+r, -mh/2, r);
+    ctx.closePath(); ctx.fill();
+  } else if (cutShape === "circle") {
+    ctx.beginPath(); ctx.ellipse(0, 0, mw/2, mh/2, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  const data = ctx.getImageData(0, 0, outW, outH).data;
+  const mask = new Uint8Array(outW * outH);
+  for (let i = 0; i < mask.length; i++) { if (data[i*4+3] > 10) mask[i] = 1; }
+  return { mask, w: outW, h: outH, contentOffsetX: oPx, contentOffsetY: oPx };
+}
+
+// Dilate a mask by radius pixels (circle brush), EXPANDING the canvas by radius on each side
+function dilateMask(src, sw, sh, radius) {
+  if (radius <= 0) return { mask: new Uint8Array(src), w: sw, h: sh, pad: 0 };
+  const r = Math.ceil(radius);
+  const ow = sw + r * 2, oh = sh + r * 2; // expanded output
+  const out = new Uint8Array(ow * oh);
+  const offsets = [];
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (dx * dx + dy * dy <= r * r) offsets.push({ dx, dy });
+  }
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    if (src[y * sw + x]) {
+      for (const { dx, dy } of offsets) {
+        const nx = x + r + dx, ny = y + r + dy; // offset by r to center in expanded canvas
+        if (nx >= 0 && nx < ow && ny >= 0 && ny < oh) out[ny * ow + nx] = 1;
+      }
+    }
+  }
+  return { mask: out, w: ow, h: oh, pad: r };
+}
+
+// Sheet-level occupancy grid
+function createSheetGrid(sW, sH) {
+  const gw = Math.ceil(sW * NEST_PPI), gh = Math.ceil(sH * NEST_PPI);
+  return { grid: new Uint8Array(gw * gh), w: gw, h: gh };
+}
+
+// Stamp a mask onto the sheet grid at a given position (in grid coords)
+function stampMask(grid, gw, gh, mask, mw, mh, gx, gy) {
+  for (let my = 0; my < mh; my++) {
+    const sy = gy + my;
+    if (sy < 0 || sy >= gh) continue;
+    const gRow = sy * gw, mRow = my * mw;
+    for (let mx = 0; mx < mw; mx++) {
+      if (!mask[mRow + mx]) continue;
+      const sx = gx + mx;
+      if (sx >= 0 && sx < gw) grid[gRow + sx] = 1;
+    }
+  }
+}
+
+// Check if a mask overlaps the sheet grid at position (gx, gy)
+function maskOverlaps(grid, gw, gh, mask, mw, mh, gx, gy) {
+  for (let my = 0; my < mh; my++) {
+    const sy = gy + my;
+    if (sy < 0 || sy >= gh) return true; // out of bounds = overlap
+    const gRow = sy * gw, mRow = my * mw;
+    for (let mx = 0; mx < mw; mx++) {
+      if (!mask[mRow + mx]) continue;
+      const sx = gx + mx;
+      if (sx < 0 || sx >= gw) return true; // out of bounds
+      if (grid[gRow + sx]) return true;
+    }
+  }
+  return false;
+}
+
+// Content-aware nesting with clean contentOffset coordinate math.
+// Every mask tracks contentOffsetX/Y = grid pixels from mask edge to content origin.
+// Stamping: maskGridPos = contentGridPos - contentOffset - dilatePad
+// Reading:  contentInches = (maskGridPos + contentOffset) / NEST_PPI
+function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutEnabled, sW, sH, count, margin, existingPlacements, autoRotate) {
+  const halfGapPx = Math.ceil((gap / 2) * NEST_PPI);
+  const { grid, w: gw, h: gh } = createSheetGrid(sW, sH);
+
+  // Mark margins as occupied
+  const marginPx = Math.ceil(Math.max(margin, 0.05) * NEST_PPI);
+  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+    if (x < marginPx || x >= gw - marginPx || y < marginPx || y >= gh - marginPx) grid[y * gw + x] = 1;
+  }
+
+  // Stamp existing placements onto grid
+  for (const ep of existingPlacements) {
+    const eImg = cachedImg(ep.src);
+    if (!eImg.complete || !eImg.naturalWidth) {
+      // Fallback: solid rect with cutOffset + halfGap expansion
+      const expand = Math.ceil(((ep.cutEnabled ? (ep.cutOffset||0) : 0) + gap / 2) * NEST_PPI);
+      const ex = Math.floor(ep.x * NEST_PPI) - expand, ey = Math.floor(ep.y * NEST_PPI) - expand;
+      const ew = Math.ceil(ep.w * NEST_PPI) + expand * 2, eh = Math.ceil(ep.h * NEST_PPI) + expand * 2;
+      for (let y = 0; y < eh; y++) for (let x = 0; x < ew; x++) {
+        const sx = ex + x, sy = ey + y;
+        if (sx >= 0 && sx < gw && sy >= 0 && sy < gh) grid[sy * gw + sx] = 1;
+      }
+      continue;
+    }
+    const epMask = buildItemMask(eImg, ep.w, ep.h, ep.cutEnabled||false, ep.cutShape||"none", ep.cutOffset||0, ep.cutRadius||0, ep.rotation||0);
+    const dilated = dilateMask(epMask.mask, epMask.w, epMask.h, halfGapPx);
+    const stampX = Math.floor(ep.x * NEST_PPI) - epMask.contentOffsetX - dilated.pad;
+    const stampY = Math.floor(ep.y * NEST_PPI) - epMask.contentOffsetY - dilated.pad;
+    stampMask(grid, gw, gh, dilated.mask, dilated.w, dilated.h, stampX, stampY);
+  }
+
+  // Prepare masks for new item (try rotations)
+  const rotations = autoRotate ? [0, 90, 180, 270] : [0];
+  const masks = rotations.map(rot => {
+    const raw = buildItemMask(img, wIn, hIn, cutEnabled, cutShape, cutOffset, 0, rot);
+    const dilated = dilateMask(raw.mask, raw.w, raw.h, halfGapPx);
+    return {
+      rot,
+      mask: dilated.mask, w: dilated.w, h: dilated.h,
+      // Total offset from dilated mask edge to content origin
+      contentOffsetX: raw.contentOffsetX + dilated.pad,
+      contentOffsetY: raw.contentOffsetY + dilated.pad,
+    };
+  });
+
+  // Scan and place, left-to-right top-to-bottom
+  const step = 2; // 2 grid pixels ≈ 0.067" — good balance of speed vs precision
+  // Limit scan height: only scan up to the lowest placed item + one item height, not the full sheet
+  let scanMaxY = gh;
+  if (existingPlacements.length) {
+    const lowestY = Math.max(...existingPlacements.map(p => p.y + p.h));
+    scanMaxY = Math.min(gh, Math.ceil((lowestY + hIn * 2 + gap * 2) * NEST_PPI));
+  }
+  const results = [];
+
+  for (let i = 0; i < count; i++) {
+    let bestPos = null, bestScore = Infinity, bestRot = 0, bestMask = null;
+
+    for (const m of masks) {
+      const maxY = Math.min(scanMaxY, gh - m.h);
+      for (let gy = 0; gy <= maxY; gy += step) {
+        if (bestPos && gy > bestPos.y + m.h) break;
+        for (let gx = 0; gx <= gw - m.w; gx += step) {
+          if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, gx, gy)) {
+            const score = gy * 10000 + gx;
+            if (score < bestScore) {
+              bestScore = score; bestPos = { x: gx, y: gy }; bestRot = m.rot; bestMask = m;
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if (!bestPos) break;
+
+    // Stamp placed item and expand scan range for next item
+    stampMask(grid, gw, gh, bestMask.mask, bestMask.w, bestMask.h, bestPos.x, bestPos.y);
+    scanMaxY = Math.min(gh, Math.max(scanMaxY, bestPos.y + bestMask.h + Math.ceil((hIn + gap) * NEST_PPI)));
+
+    // Convert to inches: content position = mask position + contentOffset
+    const isRot = bestRot === 90 || bestRot === 270;
+    results.push({
+      x: (bestPos.x + bestMask.contentOffsetX) / NEST_PPI,
+      y: (bestPos.y + bestMask.contentOffsetY) / NEST_PPI,
+      w: isRot ? hIn : wIn,
+      h: isRot ? wIn : hIn,
+      rotation: bestRot,
+    });
+  }
+
+  return results;
+}
+
 // ─── Image helpers ────────────────────────────────────────────────────────────
 const imgCache = {};
 function cachedImg(src) { if(!imgCache[src]){const i=new Image();i.src=src;imgCache[src]=i;} return imgCache[src]; }
@@ -519,6 +804,7 @@ export default function GangSheetBuilder() {
   const fileInputRef  = useRef(null);
   const tabInputRef   = useRef(null);
   const imgTimer      = useRef(null);
+  const frozenOverflow= useRef(null);
 
   // ── Undo/Redo tracking ──
   // Snapshot sheets on every meaningful change (skip during undo/redo)
@@ -947,24 +1233,34 @@ export default function GangSheetBuilder() {
   const inflateByCut=(pls)=>pls.map(p=>{
     if(!p.cutEnabled||!p.cutShape||p.cutShape==="none") return p;
     const co=p.cutOffset||0;
-    const dce=p.cutShape==="die-cut"?Math.max(p.w,p.h)*0.06:0;
+    const dce=p.cutShape==="die-cut"?Math.max(p.w,p.h)*0.08:0;
     const expand=co+dce;
     return {...p,x:p.x-expand,y:p.y-expand,w:p.w+expand*2,h:p.h+expand*2};
   });
-  const autoPlace=()=>{
+  const [nestingInProgress,setNestingInProgress]=useState(false);
+  const autoPlace=async()=>{
     if(!uploadedImg||!placeW||!placeH) return;
-    const w=parseFloat(placeW),h=parseFloat(placeH),co=cutEnabled?(cutOffset||0):0,dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.06:0,g=(parseFloat(gap)||0)+(co+dieCutExtra)*2,n=parseInt(copies)||1,m=parseFloat(margin)||0;
-    let packed=packItems(inflateByCut(placements),w,h,g,sheetW,sheetH,n,m);
-    let useW=w,useH=h,useRot=rotation;
-    if(autoRotatePlace&&w!==h){
-      const packedR=packItems(inflateByCut(placements),h,w,g,sheetW,sheetH,n,m);
-      if(packedR.length>packed.length){packed=packedR;useW=h;useH=w;useRot=(rotation+90)%360;}
+    const w=parseFloat(placeW),h=parseFloat(placeH),co=cutEnabled?(cutOffset||0):0,dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.08:0,g=parseFloat(gap)||0,n=parseInt(copies)||1,rawM=parseFloat(margin)||0,m=rawM;
+    let packed;
+    const img=cachedImg(uploadedImg.src);
+    if(autoRotatePlace&&img.complete&&img.naturalWidth){
+      // Content-aware nesting with loading dialog
+      setNestingInProgress(true);
+      await new Promise(r=>setTimeout(r,0)); // let React render loading state
+      const nested=nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,placements,true);
+      packed=nested.map(p=>({...p,rotated:p.rotation!==0}));
+      setNestingInProgress(false);
+    } else {
+      // Standard rectangular packing
+      const gFull=g+(co+dieCutExtra)*2;
+      packed=packItems(inflateByCut(placements),w,h,gFull,sheetW,sheetH,n,m).map(p=>({...p,rotated:false}));
     }
     let warn="";
     if(!packed.length){
+      // Fallback: try rectangular packing below canvas
+      const gFull=g+(co+dieCutExtra)*2;
       const maxBottom=placements.length?Math.max(...placements.map(p=>p.y+p.h)):0;
-      const g2=parseFloat(gap)||0,m2=parseFloat(margin)||0;
-      packed=packItems(inflateByCut(placements),useW,useH,g2,sheetW,maxBottom+useH*n+g2*n+m2*2,n,m2);
+      packed=packItems(inflateByCut(placements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
       if(!packed.length){updActive({warning:"Cannot place."});return;}
       warn="⚠ Placed below canvas — increase sheet height to print";
     }
@@ -975,12 +1271,12 @@ export default function GangSheetBuilder() {
       let left=remaining;
       while(left>0){
         const ns=makeSheet({label:uniqueLabel(`${active.label} (overflow ${newSheets.length+2})`),sheetW,sheetH,sheetDPI,margin:m,gap:g,uploadedImg:active.uploadedImg,placeW:active.placeW,placeH:active.placeH});
-        const sp=packItems([],useW,useH,g,sheetW,sheetH,left,m);
+        const sp=packItems([],w,h,g,sheetW,sheetH,left,m);
         if(!sp.length) break;
         const gid=uid(),col=nextColor(),sn=uploadedImg.name.replace(/\.[^.]+$/,"");
-        ns.groups=[{id:gid,name:sn,color:col,src:uploadedImg.src,w:useW,h:useH,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation:useRot,flipH,flipV}];
+        ns.groups=[{id:gid,name:sn,color:col,src:uploadedImg.src,w,h,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation,flipH,flipV}];
         const cp=cutEnabled?{cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius}:{};
-        ns.placements=sp.map(p=>({id:uid(),groupId:gid,color:col,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:useRot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cp}));
+        ns.placements=sp.map(p=>({id:uid(),groupId:gid,color:col,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cp}));
         newSheets.push(ns);
         left-=sp.length;
       }
@@ -991,19 +1287,19 @@ export default function GangSheetBuilder() {
         warn=`Only ${packed.length} of ${n} fit.`;
       }
     } else if(packed.length<n&&!warn) warn=`Only ${packed.length} of ${n} fit.`;
-    const{warn:rW,caution,effDpi}=nativeRes(uploadedImg.naturalW,uploadedImg.naturalH,useW,useH,sheetDPI);
+    const{warn:rW,caution,effDpi}=nativeRes(uploadedImg.naturalW,uploadedImg.naturalH,w,h,sheetDPI);
     if(rW) warn=`⚠ ${Math.round(effDpi)}dpi — may blur (target ${sheetDPI})`;
     else if(caution) warn=`⚠ ${Math.round(effDpi)}dpi at this size`;
     const color=nextColor(),groupId=uid(),shortName=uploadedImg.name.replace(/\.[^.]+$/,"");
     const cutProps=cutEnabled?{cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius}:{};
-    updActive(s=>({warning:warn,groups:[...s.groups,{id:groupId,name:shortName,color,src:uploadedImg.src,w:useW,h:useH,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation:useRot,flipH,flipV}],placements:[...s.placements,...packed.map(p=>({id:uid(),groupId,color,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:useRot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cutProps}))]}));
+    updActive(s=>({warning:warn,groups:[...s.groups,{id:groupId,name:shortName,color,src:uploadedImg.src,w,h,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation,flipH,flipV}],placements:[...s.placements,...packed.map(p=>{const rot=p.rotation!==undefined?(rotation+p.rotation)%360:p.rotated?(rotation+90)%360:rotation;const isRot=rot%180!==rotation%180;const pw=isRot?h:w,ph=isRot?w:h;return{id:uid(),groupId,color,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:pw,h:ph,rotation:rot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cutProps};})]}));
     if(isMobile) setDrawer(null);
   };
 
   const doFillSheet=()=>{
     setShowFillConfirm(false);
     if(!groups.length) return;
-    const designs=groups.map(g=>{const gp=placements.find(p=>p.groupId===g.id);const co=gp?.cutEnabled?(gp.cutOffset||0):0;const dce=gp?.cutEnabled&&gp?.cutShape==="die-cut"?Math.max(g.w,g.h)*0.06:0;return{w:g.w,h:g.h,gap:(g.gap||gap)+(co+dce)*2,src:g.src,groupId:g.id,color:g.color,name:g.name,naturalW:g.naturalW,naturalH:g.naturalH};});
+    const designs=groups.map(g=>{const gp=placements.find(p=>p.groupId===g.id);const co=gp?.cutEnabled?(gp.cutOffset||0):0;const dce=gp?.cutEnabled&&gp?.cutShape==="die-cut"?Math.max(g.w,g.h)*0.08:0;return{w:g.w,h:g.h,gap:(g.gap||gap)+(co+dce)*2,src:g.src,groupId:g.id,color:g.color,name:g.name,naturalW:g.naturalW,naturalH:g.naturalH};});
     const existing=inflateByCut(placements).map(p=>({x:p.x,y:p.y,w:p.w,h:p.h}));
     const packed=fillSheet(designs,sheetW,sheetH,parseFloat(margin)||0,existing,autoRotateFill);
     updActive(s=>({placements:[...s.placements,...packed.map(p=>({id:uid(),groupId:p.groupId,color:p.color,src:p.src,name:p.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:p.rotation||0,flipH:false,flipV:false,naturalW:p.naturalW,naturalH:p.naturalH}))]}));
@@ -1122,15 +1418,35 @@ export default function GangSheetBuilder() {
 
   // ── Canvas draw ──
   // Calculate overflow extent from placements outside sheet bounds
-  const overflowPad=0.5; // inches of extra space around sheet for off-canvas items
-  const pMinX=placements.length?Math.min(0,...placements.map(p=>p.x)):0;
-  const pMinY=placements.length?Math.min(0,...placements.map(p=>p.y)):0;
-  const pMaxX=placements.length?Math.max(sheetW,...placements.map(p=>p.x+p.w)):sheetW;
-  const pMaxY=placements.length?Math.max(sheetH,...placements.map(p=>p.y+p.h)):sheetH;
-  const oL=Math.max(overflowPad,Math.abs(Math.min(0,pMinX))+overflowPad);
-  const oT=Math.max(overflowPad,Math.abs(Math.min(0,pMinY))+overflowPad);
-  const oR=Math.max(overflowPad,Math.max(0,pMaxX-sheetW)+overflowPad);
-  const oB=Math.max(overflowPad,Math.max(0,pMaxY-sheetH)+overflowPad);
+  // Account for rotated bounding boxes so handles remain clickable
+  const overflowPad=5; // inches of extra space around sheet for off-canvas dragging
+  const rotBounds=(p)=>{
+    if(!p.rotation) return {minX:p.x,minY:p.y,maxX:p.x+p.w,maxY:p.y+p.h};
+    const cx=p.x+p.w/2,cy=p.y+p.h/2,rad=p.rotation*Math.PI/180;
+    const cos=Math.cos(rad),sin=Math.sin(rad);
+    const pts=[[-p.w/2,-p.h/2],[p.w/2,-p.h/2],[p.w/2,p.h/2],[-p.w/2,p.h/2]];
+    let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity;
+    for(const[dx,dy] of pts){const rx=cos*dx-sin*dy+cx,ry=sin*dx+cos*dy+cy;mnX=Math.min(mnX,rx);mnY=Math.min(mnY,ry);mxX=Math.max(mxX,rx);mxY=Math.max(mxY,ry);}
+    return{minX:mnX,minY:mnY,maxX:mxX,maxY:mxY};
+  };
+  // Include cut line offset so contours aren't clipped at canvas edges
+  const cutPad=(p)=>{if(!p.cutEnabled) return 0; const co=p.cutOffset||0; const dce=p.cutShape==="die-cut"?Math.max(p.w,p.h)*0.08:0; return co+dce;};
+  const isDraggingAny=!!(dragging||rotating||resizing);
+  const calcOverflow=()=>{
+    const pMinX=placements.length?Math.min(0,...placements.map(p=>{const c=cutPad(p),b=rotBounds(p);return b.minX-c;})):0;
+    const pMinY=placements.length?Math.min(0,...placements.map(p=>{const c=cutPad(p),b=rotBounds(p);return b.minY-c;})):0;
+    const pMaxX=placements.length?Math.max(sheetW,...placements.map(p=>{const c=cutPad(p),b=rotBounds(p);return b.maxX+c;})):sheetW;
+    const pMaxY=placements.length?Math.max(sheetH,...placements.map(p=>{const c=cutPad(p),b=rotBounds(p);return b.maxY+c;})):sheetH;
+    return{
+      oL:Math.max(overflowPad,Math.abs(Math.min(0,pMinX))+overflowPad),
+      oT:Math.max(overflowPad,Math.abs(Math.min(0,pMinY))+overflowPad),
+      oR:Math.max(overflowPad,Math.max(0,pMaxX-sheetW)+overflowPad),
+      oB:Math.max(overflowPad,Math.max(0,pMaxY-sheetH)+overflowPad),
+    };
+  };
+  if(!isDraggingAny) frozenOverflow.current=null; // clear when not dragging
+  if(isDraggingAny&&!frozenOverflow.current) frozenOverflow.current=calcOverflow(); // freeze on drag start
+  const{oL,oT,oR,oB}=frozenOverflow.current||calcOverflow();
   useEffect(()=>{
     const canvas=canvasRef.current; if(!canvas) return;
     const ctx=canvas.getContext("2d");
@@ -1154,7 +1470,7 @@ export default function GangSheetBuilder() {
       while(spx(step)<4) step*=2;
       if(gridStyle==="dots"){
         ctx.fillStyle="rgba(99,102,241,0.5)";
-        const r=Math.max(1.2,Math.min(3,pxPerGrid*0.06));
+        const r=Math.max(1.2,Math.min(3,pxPerGrid*0.08));
         for(let x=0;x<=sheetW;x+=step)for(let y=0;y<=sheetH;y+=step){ctx.beginPath();ctx.arc(spx(x),spx(y),r,0,Math.PI*2);ctx.fill();}
       }else{
         ctx.strokeStyle="rgba(99,102,241,0.3)";ctx.lineWidth=1;
@@ -1561,6 +1877,36 @@ export default function GangSheetBuilder() {
     }
     setDragging(null);setResizing(null);setRotating(null);setResizeTooltip(null);desktopPanRef.current=null;
   };
+  // Attach window-level listeners during drag/rotate/resize so events continue outside canvas
+  useEffect(()=>{
+    if(!dragging&&!rotating&&!resizing&&!desktopPanRef.current) return;
+    const handleMove=(e)=>onMM(e);
+    const handleUp=()=>onMU();
+    window.addEventListener("mousemove",handleMove);
+    window.addEventListener("mouseup",handleUp);
+    return()=>{window.removeEventListener("mousemove",handleMove);window.removeEventListener("mouseup",handleUp);};
+  },[dragging,rotating,resizing]);
+  // Edge-scroll: auto-scroll when cursor hits the wrapper's visible edge during drag
+  useEffect(()=>{
+    const wrap=canvasWrapRef.current;if(!wrap) return;
+    if(!dragging&&!rotating&&!resizing) return;
+    const edgePx=20;
+    const scrollSpeed=6;
+    let rafId=null;
+    const tick=()=>{
+      const mx=mousePos.current?.x??0, my=mousePos.current?.y??0;
+      const rect=wrap.getBoundingClientRect();
+      let dx=0,dy=0;
+      if(mx<=rect.left+edgePx) dx=-scrollSpeed;
+      else if(mx>=rect.right-edgePx) dx=scrollSpeed;
+      if(my<=rect.top+edgePx) dy=-scrollSpeed;
+      else if(my>=rect.bottom-edgePx) dy=scrollSpeed;
+      if(dx||dy){wrap.scrollLeft+=dx;wrap.scrollTop+=dy;}
+      rafId=requestAnimationFrame(tick);
+    };
+    rafId=requestAnimationFrame(tick);
+    return()=>{cancelAnimationFrame(rafId);};
+  },[dragging,rotating,resizing]);
   // Right-click on canvas (desktop context menu)
   const onCtx=e=>{
     e.preventDefault();
@@ -1979,7 +2325,7 @@ export default function GangSheetBuilder() {
     spinner:{width:32,height:32,border:`3px solid ${C.border}`,borderTop:`3px solid ${C.accentSolid}`,borderRadius:"50%",animation:"spin 0.7s linear infinite"},
     utilBar:pct=>({height:5,borderRadius:3,background:pct>90?C.red:pct>70?C.amber:C.green,width:`${pct}%`,transition:"width 0.3s"}),
     sheetTabBar:{display:"flex",alignItems:"center",background:C.surface,borderBottom:`1px solid ${C.border}`,flexShrink:0,overflowX:"auto",gap:0,zoom:uiScale},
-    sheetTab:act=>({display:"flex",alignItems:"center",gap:5,padding:"8px 12px 8px 13px",fontSize:11,cursor:"pointer",whiteSpace:"nowrap",borderRight:`1px solid ${C.border}`,background:act?C.selected:C.bg,color:act?C.text:C.muted,borderBottom:act?`3px solid ${C.accentSolid}`:"3px solid transparent",fontWeight:act?700:400,flexShrink:0}),
+    sheetTab:act=>({display:"flex",alignItems:"center",gap:5,padding:"8px 12px 8px 13px",fontSize:11,cursor:"pointer",whiteSpace:"nowrap",borderRight:`1px solid ${C.border}`,background:act?C.surface:"transparent",color:act?C.text:C.muted,borderBottom:act?`3px solid ${C.accentSolid}`:"3px solid transparent",fontWeight:act?700:400,flexShrink:0,opacity:act?1:0.6}),
     addTabBtn:{padding:"0 12px",fontSize:18,color:C.muted,cursor:"pointer",background:"transparent",border:"none",display:"flex",alignItems:"center",alignSelf:"stretch",flexShrink:0},
     // Mobile bottom nav
     mobileNav:{display:"flex",background:C.surface,borderTop:`1px solid ${C.border}`,flexShrink:0,zIndex:100},
@@ -2453,6 +2799,12 @@ export default function GangSheetBuilder() {
         </div>
       )}
       {showExportAd&&<ExportAd onClose={onExportAdDone}/>}
+      {nestingInProgress&&(
+        <div style={S.overlay}>
+          <div style={S.spinner}/>
+          <div style={{fontSize:12,color:C.accent,marginTop:8}}>Calculating placement…</div>
+        </div>
+      )}
       {exporting&&(
         <div style={S.overlay}>
           <div style={S.spinner}/>
@@ -2574,7 +2926,7 @@ export default function GangSheetBuilder() {
               <div style={{padding:isMobile?10:40}}>
                 <canvas ref={canvasRef}
                   style={{display:"block",cursor:rotating?"alias":desktopPanRef.current?"grabbing":resizing?(resizing.corner==="tl"||resizing.corner==="br"?"nwse-resize":"nesw-resize"):dragging?"grabbing":isPanMode?"grab":hoverCursor||"crosshair",touchAction:"none"}}
-                  onMouseDown={onMD} onMouseMove={onMM} onMouseUp={onMU} onMouseLeave={onMU}
+                  onMouseDown={onMD} onMouseMove={onMM} onMouseUp={onMU} onMouseLeave={()=>{if(!dragging&&!rotating&&!resizing) onMU();}}
                   onContextMenu={onCtx}
                   onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}/>
               </div>
