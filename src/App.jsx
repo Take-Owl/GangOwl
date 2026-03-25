@@ -754,6 +754,25 @@ export default function GangSheetBuilder() {
   const [saveStatus, setSaveStatus] = useState("");
   const [saveLoading, setSaveLoading] = useState(true);
 
+  // Auto-update check (desktop/Tauri only)
+  useEffect(() => {
+    if (!window.__TAURI_INTERNALS__) return; // not running in Tauri
+    (async () => {
+      try {
+        const { check } = await import("@tauri-apps/plugin-updater");
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        const update = await check();
+        if (update?.available) {
+          const yes = window.confirm(`GangOwl ${update.version} is available. Update now?`);
+          if (yes) {
+            await update.downloadAndInstall();
+            await relaunch();
+          }
+        }
+      } catch (e) { console.log("Update check skipped:", e.message); }
+    })();
+  }, []);
+
   // Loading state — shown while images from saved project are loading
   const [appLoading, setAppLoading] = useState(()=>{
     const s = savedUI.current;
