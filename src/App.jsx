@@ -79,7 +79,7 @@ function fillSheet(designs, sW, sH, margin, existing=[], autoRotate=false) {
 
 // ─── Content-aware nesting (raster mask approach) ────────────────────────────
 // Resolution: pixels per inch in the nesting grid. Lower = faster, coarser.
-const NEST_PPI = 30; // 30 pixels per inch → ~0.033" resolution
+const NEST_PPI = 15; // 15 pixels per inch → ~0.067" resolution (fast, plenty accurate for placement)
 
 // Extract a binary alpha mask from an image at nesting resolution
 function extractMask(img, wIn, hIn, rotation=0) {
@@ -312,7 +312,7 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
   });
 
   // ─── Row-scan placement with smart bounds + async yields ───
-  const step = 2;
+  const step = 1; // 1 grid pixel at 15 PPI ≈ 0.067" — tight packing with good speed
   const results = [];
   let lastYield = performance.now();
   // Track scan bounds — only scan where items could fit, not the full sheet
