@@ -2555,13 +2555,14 @@ export default function GangSheetBuilder() {
   const layersPanelJsx=(
     <>
       <div style={{flex:1,overflowY:"auto",padding:"8px 8px 5px"}} onDragOver={e=>{
+        e.preventDefault(); e.dataTransfer.dropEffect="move";
         // Auto-scroll layers panel when dragging near edges
         const el=e.currentTarget,rect=el.getBoundingClientRect();
         const zone=60,speed=18;
         const topDist=e.clientY-rect.top,botDist=rect.bottom-e.clientY;
         if(topDist<zone)el.scrollTop-=speed*(1-topDist/zone);
         else if(botDist<zone)el.scrollTop+=speed*(1-botDist/zone);
-      }} onContextMenu={e=>{
+      }} onDrop={e=>{e.preventDefault();setDragOverId(null);}} onContextMenu={e=>{
         // Right-click on empty area
         if(e.target.closest('[data-layer-row]'))return;
         e.preventDefault();
