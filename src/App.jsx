@@ -311,90 +311,38 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
     };
   });
 
-  // ─── Candidate-position placement (much faster than full grid scan) ───
-  // Instead of scanning every pixel, maintain a set of candidate positions
-  // derived from edges/corners of already-placed items + margins.
+  // ─── Row-scan placement with smart bounds + async yields ───
   const step = 2;
-  const candidates = new Set();
-  // Seed: top-left corner (margin)
-  const addCandidate = (x, y) => {
-    const sx = Math.round(x / step) * step, sy = Math.round(y / step) * step;
-    if (sx >= 0 && sy >= 0 && sx < gw && sy < gh) candidates.add(sy * 100000 + sx);
-  };
-  addCandidate(marginPx, marginPx);
-
-  // Add candidates from existing placements' edges
-  for (const ep of existingPlacements) {
-    const ex = Math.floor(ep.x * NEST_PPI), ey = Math.floor(ep.y * NEST_PPI);
-    const ew = Math.ceil(ep.w * NEST_PPI), eh = Math.ceil(ep.h * NEST_PPI);
-    addCandidate(ex + ew + halfGapPx, ey);          // right edge
-    addCandidate(ex, ey + eh + halfGapPx);           // bottom edge
-    addCandidate(ex + ew + halfGapPx, ey + eh + halfGapPx); // diagonal
-    addCandidate(marginPx, ey + eh + halfGapPx);     // left-aligned below
-    addCandidate(ex + ew + halfGapPx, marginPx);     // top-aligned right
-  }
-
   const results = [];
   let lastYield = performance.now();
+  // Track scan bounds — only scan where items could fit, not the full sheet
+  let scanMaxY = marginPx + Math.ceil((hIn + gap) * NEST_PPI);
+  if (existingPlacements.length) {
+    const epLowest = Math.max(...existingPlacements.map(p => (p.y + p.h) * NEST_PPI));
+    scanMaxY = Math.min(gh, Math.ceil(epLowest + (hIn * 2 + gap * 2) * NEST_PPI));
+  }
 
   for (let i = 0; i < count; i++) {
     if (onProgress) onProgress(i, count);
-    // Yield to UI every 200ms so loading dialog stays responsive
-    if (performance.now() - lastYield > 200) {
-      await new Promise(r => setTimeout(r, 0));
-      lastYield = performance.now();
-    }
 
     let bestPos = null, bestScore = Infinity, bestRot = 0, bestMask = null;
 
-    // Phase 1: Try all candidate positions (fast — typically <500 positions)
-    const candArray = Array.from(candidates).sort((a, b) => a - b); // sort top-left first
-    for (const encoded of candArray) {
-      const cy = Math.floor(encoded / 100000), cx = encoded % 100000;
-      for (const m of masks) {
-        if (cx + m.w > gw || cy + m.h > gh) continue;
-        if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, cx, cy)) {
-          const score = cy * 100000 + cx;
-          if (score < bestScore) {
-            bestScore = score; bestPos = { x: cx, y: cy }; bestRot = m.rot; bestMask = m;
-          }
+    for (const m of masks) {
+      const maxY = Math.min(scanMaxY, gh - m.h);
+      for (let gy = 0; gy <= maxY; gy += step) {
+        if (bestPos && gy > bestPos.y + m.h) break; // can't beat current best
+        // Yield to UI periodically so loading dialog stays responsive
+        if (performance.now() - lastYield > 150) {
+          await new Promise(r => setTimeout(r, 0));
+          lastYield = performance.now();
         }
-      }
-    }
-
-    // Phase 2: If no candidate worked, do a focused row scan around promising areas
-    if (!bestPos) {
-      // Scan rows near existing content, not the entire sheet
-      let scanMaxY = marginPx + Math.ceil(hIn * NEST_PPI);
-      if (results.length) {
-        const lowestY = Math.max(...results.map(r => {
-          const idx = results.indexOf(r);
-          return (r.y + r.h) * NEST_PPI;
-        }));
-        scanMaxY = Math.min(gh, Math.ceil(lowestY + (hIn * 2 + gap * 2) * NEST_PPI));
-      }
-      if (existingPlacements.length) {
-        const epLowest = Math.max(...existingPlacements.map(p => (p.y + p.h) * NEST_PPI));
-        scanMaxY = Math.max(scanMaxY, Math.min(gh, Math.ceil(epLowest + (hIn * 2 + gap * 2) * NEST_PPI)));
-      }
-
-      for (const m of masks) {
-        const maxY = Math.min(scanMaxY, gh - m.h);
-        for (let gy = 0; gy <= maxY; gy += step) {
-          if (bestPos && gy > bestPos.y + m.h) break;
-          // Yield periodically during heavy scan
-          if (performance.now() - lastYield > 200) {
-            await new Promise(r => setTimeout(r, 0));
-            lastYield = performance.now();
-          }
-          for (let gx = 0; gx <= gw - m.w; gx += step) {
-            if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, gx, gy)) {
-              const score = gy * 100000 + gx;
-              if (score < bestScore) {
-                bestScore = score; bestPos = { x: gx, y: gy }; bestRot = m.rot; bestMask = m;
-              }
-              break;
+        for (let gx = 0; gx <= gw - m.w; gx += step) {
+          if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, gx, gy)) {
+            const score = gy * 100000 + gx;
+            if (score < bestScore) {
+              bestScore = score; bestPos = { x: gx, y: gy }; bestRot = m.rot; bestMask = m;
             }
+            break; // first valid x in this row — move to next row
           }
         }
       }
@@ -402,20 +350,9 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
 
     if (!bestPos) break;
 
-    // Stamp and generate new candidates from this placement's edges
+    // Stamp placed item and expand scan range
     stampMask(grid, gw, gh, bestMask.mask, bestMask.w, bestMask.h, bestPos.x, bestPos.y);
-    addCandidate(bestPos.x + bestMask.w, bestPos.y);                    // right
-    addCandidate(bestPos.x, bestPos.y + bestMask.h);                    // below
-    addCandidate(bestPos.x + bestMask.w, bestPos.y + bestMask.h);       // diagonal
-    addCandidate(marginPx, bestPos.y + bestMask.h);                     // left-aligned below
-    addCandidate(bestPos.x + bestMask.w, marginPx);                     // top-aligned right
-    // Also add candidates slightly inset to find nestled positions
-    for (let dy = 0; dy < bestMask.h; dy += Math.max(4, bestMask.h >> 2)) {
-      addCandidate(bestPos.x + bestMask.w, bestPos.y + dy);             // along right edge
-    }
-    for (let dx = 0; dx < bestMask.w; dx += Math.max(4, bestMask.w >> 2)) {
-      addCandidate(bestPos.x + dx, bestPos.y + bestMask.h);             // along bottom edge
-    }
+    scanMaxY = Math.min(gh, Math.max(scanMaxY, bestPos.y + bestMask.h + Math.ceil((hIn + gap) * NEST_PPI)));
 
     const isRot = bestRot === 90 || bestRot === 270;
     results.push({
@@ -837,7 +774,7 @@ export default function GangSheetBuilder() {
             await relaunch();
           }
         }
-      } catch (e) { console.log("Update check skipped:", e.message); }
+      } catch (e) { console.error("Update check failed:", e); alert("Update check error: " + e.message); }
     })();
   }, []);
 
