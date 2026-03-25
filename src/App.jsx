@@ -801,21 +801,32 @@ export default function GangSheetBuilder() {
   const [saveLoading, setSaveLoading] = useState(true);
 
   // Auto-update check (desktop/Tauri only)
+  const [updateStatus, setUpdateStatus] = useState(null);
   useEffect(() => {
     if (!window.__TAURI_INTERNALS__) return; // not running in Tauri
     (async () => {
       try {
+        setUpdateStatus("Checking for updates...");
         const { check } = await import("@tauri-apps/plugin-updater");
         const { relaunch } = await import("@tauri-apps/plugin-process");
         const update = await check();
         if (update?.available) {
+          setUpdateStatus(null);
           const yes = window.confirm(`GangOwl ${update.version} is available. Update now?`);
           if (yes) {
+            setUpdateStatus(`Downloading ${update.version}...`);
             await update.downloadAndInstall();
             await relaunch();
           }
+        } else {
+          setUpdateStatus("Up to date ✓");
+          setTimeout(() => setUpdateStatus(null), 3000);
         }
-      } catch (e) { console.error("Update check failed:", e); alert("Update check error: " + e.message); }
+      } catch (e) {
+        console.error("Update check failed:", e);
+        setUpdateStatus("Update check failed: " + e.message);
+        setTimeout(() => setUpdateStatus(null), 8000);
+      }
     })();
   }, []);
 
@@ -3045,6 +3056,7 @@ export default function GangSheetBuilder() {
             {snapToGrid&&<span style={{color:C.greenBright}}>snap {snapSize}"</span>}
             <span>{sheets.length} sheet{sheets.length!==1?"s":""}</span>
             {!showLayers&&!isMobile&&<button style={{fontSize:10,color:C.accent,background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,cursor:"pointer",padding:"2px 8px",marginLeft:4}} onClick={()=>setShowLayers(true)} title="Show layers panel">Layers</button>}
+            {updateStatus&&<span style={{fontSize:9,color:C.accent,marginLeft:8}}>{updateStatus}</span>}
             <span style={{marginLeft:"auto",fontSize:9,color:C.muted}}>Ctrl+Z/Y · Del · Ctrl+D · Ctrl+0</span>
           </div>
         </div>
