@@ -689,6 +689,8 @@ export default function GangSheetBuilder() {
     return [makeSheet({label:"Sheet 1"})];
   });
   const [activeId, setActiveId]     = useState(()=>savedUI.current?.activeId||sheets[0]?.id);
+  // Safety: ensure at least one sheet always exists
+  useEffect(()=>{if(!sheets.length){const ns=makeSheet({label:"Sheet 1"});setSheets([ns]);setActiveId(ns.id);}},[sheets]);
   const [editingTabId, setEditingTabId]     = useState(null);
   const [editingTabLabel, setEditingTabLabel] = useState("");
 
@@ -751,6 +753,27 @@ export default function GangSheetBuilder() {
   const [saveName, setSaveName] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [saveLoading, setSaveLoading] = useState(true);
+
+  // Loading state — shown while images from saved project are loading
+  const [appLoading, setAppLoading] = useState(()=>{
+    const s = savedUI.current;
+    return s?.sheets?.some(sh => sh.placements?.length > 0) || false;
+  });
+  useEffect(()=>{
+    if (!appLoading) return;
+    // Wait for all cached images to load, then hide loading screen
+    const srcs = [...new Set(sheets.flatMap(s => s.placements.map(p => p.src)))];
+    if (!srcs.length) { setAppLoading(false); return; }
+    let loaded = 0;
+    const check = () => { loaded++; if (loaded >= srcs.length) setAppLoading(false); };
+    const timeout = setTimeout(() => setAppLoading(false), 5000); // max 5s wait
+    srcs.forEach(src => {
+      const img = cachedImg(src);
+      if (img.complete) check();
+      else { img.onload = check; img.onerror = check; }
+    });
+    return () => clearTimeout(timeout);
+  }, []); // eslint-disable-line
 
   // Presets
   const [presets, setPresets]     = useState([]);
@@ -966,13 +989,15 @@ export default function GangSheetBuilder() {
   };
   const closeSheet=(sid,e)=>{
     e?.stopPropagation();
+    if(confirmClose) return; // prevent double-close while dialog is open
     const s=sheets.find(s=>s.id===sid);
     setConfirmClose({sheetId:sid,label:s?.label||"Sheet",hasContent:s?.placements?.length>0});
   };
   const doCloseSheet=(sid)=>{
-    if(sheets.length===1){const ns=makeSheet({label:"Sheet 1"});setSheets([ns]);setActiveId(ns.id);setSelected(null);setMultiSelected([]);setConfirmClose(null);setLeftTab("sheet");return;}
+    if(sheets.length<=1){const ns=makeSheet({label:"Sheet 1"});setSheets([ns]);setActiveId(ns.id);setSelected(null);setMultiSelected([]);setConfirmClose(null);setLeftTab("sheet");return;}
     const idx=sheets.findIndex(s=>s.id===sid);
     const next=sheets.filter(s=>s.id!==sid);
+    if(!next.length){const ns=makeSheet({label:"Sheet 1"});setSheets([ns]);setActiveId(ns.id);setSelected(null);setMultiSelected([]);setConfirmClose(null);return;}
     setSheets(next);
     if(activeId===sid){setActiveId(next[Math.max(0,idx-1)].id);setSelected(null);}
     setConfirmClose(null);
@@ -2799,6 +2824,12 @@ export default function GangSheetBuilder() {
         </div>
       )}
       {showExportAd&&<ExportAd onClose={onExportAdDone}/>}
+      {appLoading&&(
+        <div style={S.overlay}>
+          <div style={S.spinner}/>
+          <div style={{fontSize:12,color:C.accent,marginTop:8}}>Loading project…</div>
+        </div>
+      )}
       {nestingInProgress&&(
         <div style={S.overlay}>
           <div style={S.spinner}/>
