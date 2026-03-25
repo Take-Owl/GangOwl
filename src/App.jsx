@@ -264,6 +264,55 @@ function maskOverlaps(grid, gw, gh, mask, mw, mh, gx, gy) {
   return false;
 }
 
+// ─── Web Worker for parallel nesting scan ───────────────────────────────────
+// Runs the heavy maskOverlaps scan loop off the main thread.
+// Each worker handles one rotation, all rotations run in parallel.
+const nestWorkerCode = `
+self.onmessage = function(e) {
+  const { grid, gw, gh, mask, mw, mh, scanMaxY, step } = e.data;
+  let bestX = -1, bestY = -1, bestScore = Infinity;
+  const maxY = Math.min(scanMaxY, gh - mh);
+  for (let gy = 0; gy <= maxY; gy += step) {
+    if (bestX >= 0 && gy > bestY + mh) break;
+    for (let gx = 0; gx <= gw - mw; gx += step) {
+      let overlap = false;
+      for (let my = 0; my < mh && !overlap; my++) {
+        const sy = gy + my;
+        if (sy < 0 || sy >= gh) { overlap = true; break; }
+        const gRow = sy * gw, mRow = my * mw;
+        for (let mx = 0; mx < mw; mx++) {
+          if (!mask[mRow + mx]) continue;
+          const sx = gx + mx;
+          if (sx < 0 || sx >= gw || grid[gRow + sx]) { overlap = true; break; }
+        }
+      }
+      if (!overlap) {
+        const score = gy * 100000 + gx;
+        if (score < bestScore) { bestScore = score; bestX = gx; bestY = gy; }
+        break;
+      }
+    }
+  }
+  self.postMessage({ bestX, bestY, bestScore });
+};`;
+let nestWorkerBlob = null;
+function getNestWorkerURL() {
+  if (!nestWorkerBlob) nestWorkerBlob = URL.createObjectURL(new Blob([nestWorkerCode], { type: "application/javascript" }));
+  return nestWorkerBlob;
+}
+
+function runScanWorker(grid, gw, gh, mask, mw, mh, scanMaxY, step) {
+  return new Promise(resolve => {
+    const w = new Worker(getNestWorkerURL());
+    // Transfer copies so each worker gets its own view
+    const gridCopy = new Uint8Array(grid);
+    const maskCopy = new Uint8Array(mask);
+    w.onmessage = e => { w.terminate(); resolve(e.data); };
+    w.onerror = () => { w.terminate(); resolve({ bestX: -1, bestY: -1, bestScore: Infinity }); };
+    w.postMessage({ grid: gridCopy, gw, gh, mask: maskCopy, mw, mh, scanMaxY, step });
+  });
+}
+
 // Content-aware nesting with clean contentOffset coordinate math.
 // Every mask tracks contentOffsetX/Y = grid pixels from mask edge to content origin.
 // Stamping: maskGridPos = contentGridPos - contentOffset - dilatePad
@@ -327,24 +376,16 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
 
     let bestPos = null, bestScore = Infinity, bestRot = 0, bestMask = null;
 
-    for (const m of masks) {
-      const maxY = Math.min(scanMaxY, gh - m.h);
-      for (let gy = 0; gy <= maxY; gy += step) {
-        if (bestPos && gy > bestPos.y + m.h) break; // can't beat current best
-        // Yield to UI periodically so loading dialog stays responsive
-        if (performance.now() - lastYield > 150) {
-          await new Promise(r => setTimeout(r, 0));
-          lastYield = performance.now();
-        }
-        for (let gx = 0; gx <= gw - m.w; gx += step) {
-          if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, gx, gy)) {
-            const score = gy * 100000 + gx;
-            if (score < bestScore) {
-              bestScore = score; bestPos = { x: gx, y: gy }; bestRot = m.rot; bestMask = m;
-            }
-            break; // first valid x in this row — move to next row
-          }
-        }
+    // Launch all rotations in parallel via Web Workers
+    const workerPromises = masks.map(m =>
+      runScanWorker(grid, gw, gh, m.mask, m.w, m.h, scanMaxY, step)
+        .then(result => ({ ...result, m }))
+    );
+    const workerResults = await Promise.all(workerPromises);
+
+    for (const { bestX, bestY, bestScore: ws, m } of workerResults) {
+      if (bestX >= 0 && ws < bestScore) {
+        bestScore = ws; bestPos = { x: bestX, y: bestY }; bestRot = m.rot; bestMask = m;
       }
     }
 
