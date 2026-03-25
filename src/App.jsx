@@ -268,7 +268,7 @@ function maskOverlaps(grid, gw, gh, mask, mw, mh, gx, gy) {
 // Every mask tracks contentOffsetX/Y = grid pixels from mask edge to content origin.
 // Stamping: maskGridPos = contentGridPos - contentOffset - dilatePad
 // Reading:  contentInches = (maskGridPos + contentOffset) / NEST_PPI
-function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutEnabled, sW, sH, count, margin, existingPlacements, autoRotate) {
+async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutEnabled, sW, sH, count, margin, existingPlacements, autoRotate, onProgress) {
   const halfGapPx = Math.ceil((gap / 2) * NEST_PPI);
   const { grid, w: gw, h: gh } = createSheetGrid(sW, sH);
 
@@ -282,7 +282,6 @@ function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutE
   for (const ep of existingPlacements) {
     const eImg = cachedImg(ep.src);
     if (!eImg.complete || !eImg.naturalWidth) {
-      // Fallback: solid rect with cutOffset + halfGap expansion
       const expand = Math.ceil(((ep.cutEnabled ? (ep.cutOffset||0) : 0) + gap / 2) * NEST_PPI);
       const ex = Math.floor(ep.x * NEST_PPI) - expand, ey = Math.floor(ep.y * NEST_PPI) - expand;
       const ew = Math.ceil(ep.w * NEST_PPI) + expand * 2, eh = Math.ceil(ep.h * NEST_PPI) + expand * 2;
@@ -307,36 +306,95 @@ function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutE
     return {
       rot,
       mask: dilated.mask, w: dilated.w, h: dilated.h,
-      // Total offset from dilated mask edge to content origin
       contentOffsetX: raw.contentOffsetX + dilated.pad,
       contentOffsetY: raw.contentOffsetY + dilated.pad,
     };
   });
 
-  // Scan and place, left-to-right top-to-bottom
-  const step = 2; // 2 grid pixels ≈ 0.067" — good balance of speed vs precision
-  // Limit scan height: only scan up to the lowest placed item + one item height, not the full sheet
-  let scanMaxY = gh;
-  if (existingPlacements.length) {
-    const lowestY = Math.max(...existingPlacements.map(p => p.y + p.h));
-    scanMaxY = Math.min(gh, Math.ceil((lowestY + hIn * 2 + gap * 2) * NEST_PPI));
+  // ─── Candidate-position placement (much faster than full grid scan) ───
+  // Instead of scanning every pixel, maintain a set of candidate positions
+  // derived from edges/corners of already-placed items + margins.
+  const step = 2;
+  const candidates = new Set();
+  // Seed: top-left corner (margin)
+  const addCandidate = (x, y) => {
+    const sx = Math.round(x / step) * step, sy = Math.round(y / step) * step;
+    if (sx >= 0 && sy >= 0 && sx < gw && sy < gh) candidates.add(sy * 100000 + sx);
+  };
+  addCandidate(marginPx, marginPx);
+
+  // Add candidates from existing placements' edges
+  for (const ep of existingPlacements) {
+    const ex = Math.floor(ep.x * NEST_PPI), ey = Math.floor(ep.y * NEST_PPI);
+    const ew = Math.ceil(ep.w * NEST_PPI), eh = Math.ceil(ep.h * NEST_PPI);
+    addCandidate(ex + ew + halfGapPx, ey);          // right edge
+    addCandidate(ex, ey + eh + halfGapPx);           // bottom edge
+    addCandidate(ex + ew + halfGapPx, ey + eh + halfGapPx); // diagonal
+    addCandidate(marginPx, ey + eh + halfGapPx);     // left-aligned below
+    addCandidate(ex + ew + halfGapPx, marginPx);     // top-aligned right
   }
+
   const results = [];
+  let lastYield = performance.now();
 
   for (let i = 0; i < count; i++) {
+    if (onProgress) onProgress(i, count);
+    // Yield to UI every 200ms so loading dialog stays responsive
+    if (performance.now() - lastYield > 200) {
+      await new Promise(r => setTimeout(r, 0));
+      lastYield = performance.now();
+    }
+
     let bestPos = null, bestScore = Infinity, bestRot = 0, bestMask = null;
 
-    for (const m of masks) {
-      const maxY = Math.min(scanMaxY, gh - m.h);
-      for (let gy = 0; gy <= maxY; gy += step) {
-        if (bestPos && gy > bestPos.y + m.h) break;
-        for (let gx = 0; gx <= gw - m.w; gx += step) {
-          if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, gx, gy)) {
-            const score = gy * 10000 + gx;
-            if (score < bestScore) {
-              bestScore = score; bestPos = { x: gx, y: gy }; bestRot = m.rot; bestMask = m;
+    // Phase 1: Try all candidate positions (fast — typically <500 positions)
+    const candArray = Array.from(candidates).sort((a, b) => a - b); // sort top-left first
+    for (const encoded of candArray) {
+      const cy = Math.floor(encoded / 100000), cx = encoded % 100000;
+      for (const m of masks) {
+        if (cx + m.w > gw || cy + m.h > gh) continue;
+        if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, cx, cy)) {
+          const score = cy * 100000 + cx;
+          if (score < bestScore) {
+            bestScore = score; bestPos = { x: cx, y: cy }; bestRot = m.rot; bestMask = m;
+          }
+        }
+      }
+    }
+
+    // Phase 2: If no candidate worked, do a focused row scan around promising areas
+    if (!bestPos) {
+      // Scan rows near existing content, not the entire sheet
+      let scanMaxY = marginPx + Math.ceil(hIn * NEST_PPI);
+      if (results.length) {
+        const lowestY = Math.max(...results.map(r => {
+          const idx = results.indexOf(r);
+          return (r.y + r.h) * NEST_PPI;
+        }));
+        scanMaxY = Math.min(gh, Math.ceil(lowestY + (hIn * 2 + gap * 2) * NEST_PPI));
+      }
+      if (existingPlacements.length) {
+        const epLowest = Math.max(...existingPlacements.map(p => (p.y + p.h) * NEST_PPI));
+        scanMaxY = Math.max(scanMaxY, Math.min(gh, Math.ceil(epLowest + (hIn * 2 + gap * 2) * NEST_PPI)));
+      }
+
+      for (const m of masks) {
+        const maxY = Math.min(scanMaxY, gh - m.h);
+        for (let gy = 0; gy <= maxY; gy += step) {
+          if (bestPos && gy > bestPos.y + m.h) break;
+          // Yield periodically during heavy scan
+          if (performance.now() - lastYield > 200) {
+            await new Promise(r => setTimeout(r, 0));
+            lastYield = performance.now();
+          }
+          for (let gx = 0; gx <= gw - m.w; gx += step) {
+            if (!maskOverlaps(grid, gw, gh, m.mask, m.w, m.h, gx, gy)) {
+              const score = gy * 100000 + gx;
+              if (score < bestScore) {
+                bestScore = score; bestPos = { x: gx, y: gy }; bestRot = m.rot; bestMask = m;
+              }
+              break;
             }
-            break;
           }
         }
       }
@@ -344,11 +402,21 @@ function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutE
 
     if (!bestPos) break;
 
-    // Stamp placed item and expand scan range for next item
+    // Stamp and generate new candidates from this placement's edges
     stampMask(grid, gw, gh, bestMask.mask, bestMask.w, bestMask.h, bestPos.x, bestPos.y);
-    scanMaxY = Math.min(gh, Math.max(scanMaxY, bestPos.y + bestMask.h + Math.ceil((hIn + gap) * NEST_PPI)));
+    addCandidate(bestPos.x + bestMask.w, bestPos.y);                    // right
+    addCandidate(bestPos.x, bestPos.y + bestMask.h);                    // below
+    addCandidate(bestPos.x + bestMask.w, bestPos.y + bestMask.h);       // diagonal
+    addCandidate(marginPx, bestPos.y + bestMask.h);                     // left-aligned below
+    addCandidate(bestPos.x + bestMask.w, marginPx);                     // top-aligned right
+    // Also add candidates slightly inset to find nestled positions
+    for (let dy = 0; dy < bestMask.h; dy += Math.max(4, bestMask.h >> 2)) {
+      addCandidate(bestPos.x + bestMask.w, bestPos.y + dy);             // along right edge
+    }
+    for (let dx = 0; dx < bestMask.w; dx += Math.max(4, bestMask.w >> 2)) {
+      addCandidate(bestPos.x + dx, bestPos.y + bestMask.h);             // along bottom edge
+    }
 
-    // Convert to inches: content position = mask position + contentOffset
     const isRot = bestRot === 90 || bestRot === 270;
     results.push({
       x: (bestPos.x + bestMask.contentOffsetX) / NEST_PPI,
@@ -1282,6 +1350,7 @@ export default function GangSheetBuilder() {
     return {...p,x:p.x-expand,y:p.y-expand,w:p.w+expand*2,h:p.h+expand*2};
   });
   const [nestingInProgress,setNestingInProgress]=useState(false);
+  const [nestingProgress,setNestingProgress]=useState("");
   const autoPlace=async()=>{
     if(!uploadedImg||!placeW||!placeH) return;
     const w=parseFloat(placeW),h=parseFloat(placeH),co=cutEnabled?(cutOffset||0):0,dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.08:0,g=parseFloat(gap)||0,n=parseInt(copies)||1,rawM=parseFloat(margin)||0,m=rawM;
@@ -1289,9 +1358,11 @@ export default function GangSheetBuilder() {
     const img=cachedImg(uploadedImg.src);
     if(autoRotatePlace&&img.complete&&img.naturalWidth){
       // Content-aware nesting with loading dialog
-      setNestingInProgress(true);
+      setNestingInProgress(true); setNestingProgress("Preparing masks…");
       await new Promise(r=>setTimeout(r,0)); // let React render loading state
-      const nested=nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,placements,true);
+      const nested=await nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,placements,true,(done,total)=>{
+        setNestingProgress(`Placing ${done+1} of ${total}...`);
+      });
       packed=nested.map(p=>({...p,rotated:p.rotation!==0}));
       setNestingInProgress(false);
     } else {
@@ -2853,7 +2924,7 @@ export default function GangSheetBuilder() {
       {nestingInProgress&&(
         <div style={S.overlay}>
           <div style={S.spinner}/>
-          <div style={{fontSize:12,color:C.accent,marginTop:8}}>Calculating placement…</div>
+          <div style={{fontSize:12,color:C.accent,marginTop:8}}>{nestingProgress||"Calculating placement…"}</div>
         </div>
       )}
       {exporting&&(
