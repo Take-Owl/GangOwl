@@ -1,6 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capabilities for GangOwl desktop app",
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:default",
