@@ -19,7 +19,7 @@
     "process:allow-restart",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "https://github.com/**" }, { "url": "https://objects.githubusercontent.com/**" }]
+      "allow": [{ "url": "https://**" }]
     }
   ]
 }
