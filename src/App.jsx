@@ -2280,9 +2280,10 @@ export default function GangSheetBuilder() {
     const MAX_DIM=16384;const MAX_AREA=124_000_000;
     const needsTiling=fullW>MAX_DIM||fullH>MAX_DIM||fullW*fullH>MAX_AREA;
 
+    const cutOpts=sheet.cutEnabled?{enabled:true,shape:sheet.cutShape,offset:sheet.cutOffset,width:sheet.cutWidth,color:sheet.cutColor,radius:sheet.cutRadius}:null;
+
     if(!needsTiling){
       setExportProgress(`[${sheet.label}] Rendering…`);setExportPct(pctFn(25));
-      const cutOpts=sheet.cutEnabled?{enabled:true,shape:sheet.cutShape,offset:sheet.cutOffset,width:sheet.cutWidth,color:sheet.cutColor,radius:sheet.cutRadius}:null;
       const tile=drawTile(cache,sheet.placements,sheet.sheetDPI,0,0,fullW,fullH,bg,sheet.mirrorExport,cutOpts);
       if(!tile) throw new Error("Could not create canvas — try closing other tabs");
       setExportProgress(`[${sheet.label}] Encoding ${exportFormat.toUpperCase()}…`);setExportPct(pctFn(80));
