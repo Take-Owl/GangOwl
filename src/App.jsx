@@ -820,12 +820,13 @@ export default function GangSheetBuilder() {
           }
         } else {
           setUpdateStatus("Up to date ✓");
-          setTimeout(() => setUpdateStatus(null), 3000);
+          setTimeout(() => setUpdateStatus(null), 10000);
         }
       } catch (e) {
         console.error("Update check failed:", e);
-        setUpdateStatus("Update check failed: " + e.message);
-        setTimeout(() => setUpdateStatus(null), 8000);
+        const msg = "Update check failed: " + e.message;
+        setUpdateStatus(msg);
+        alert(msg);
       }
     })();
   }, []);
@@ -3056,7 +3057,7 @@ export default function GangSheetBuilder() {
             {snapToGrid&&<span style={{color:C.greenBright}}>snap {snapSize}"</span>}
             <span>{sheets.length} sheet{sheets.length!==1?"s":""}</span>
             {!showLayers&&!isMobile&&<button style={{fontSize:10,color:C.accent,background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,cursor:"pointer",padding:"2px 8px",marginLeft:4}} onClick={()=>setShowLayers(true)} title="Show layers panel">Layers</button>}
-            {updateStatus&&<span style={{fontSize:9,color:C.accent,marginLeft:8}}>{updateStatus}</span>}
+            {updateStatus&&<span style={{fontSize:11,color:"#4ade80",marginLeft:8,fontWeight:"bold"}}>{updateStatus}</span>}
             <span style={{marginLeft:"auto",fontSize:9,color:C.muted}}>Ctrl+Z/Y · Del · Ctrl+D · Ctrl+0</span>
           </div>
         </div>
