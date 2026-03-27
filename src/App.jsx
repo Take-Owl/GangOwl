@@ -803,30 +803,50 @@ export default function GangSheetBuilder() {
   // Auto-update check (desktop/Tauri only)
   const [updateStatus, setUpdateStatus] = useState(null);
   useEffect(() => {
-    if (!window.__TAURI_INTERNALS__) return; // not running in Tauri
+    if (!window.__TAURI_INTERNALS__) return;
+    const APP_VERSION = "1.3.6";
+    const LATEST_URL = "https://github.com/Take-Owl/GangOwl/releases/latest/download/latest.json";
     (async () => {
       try {
         setUpdateStatus("Checking for updates...");
+        // Step 1: Manually fetch latest.json to check version
+        const resp = await fetch(LATEST_URL);
+        if (!resp.ok) throw new Error("Could not reach update server (HTTP " + resp.status + ")");
+        const latest = await resp.json();
+        const remoteVer = latest.version;
+        if (!remoteVer) throw new Error("No version in latest.json");
+        // Compare versions
+        const toNum = v => v.split(".").map(Number);
+        const [aM, am, ap] = toNum(APP_VERSION), [bM, bm, bp] = toNum(remoteVer);
+        const needsUpdate = bM > aM || (bM === aM && bm > am) || (bM === aM && bm === am && bp > ap);
+        if (!needsUpdate) {
+          setUpdateStatus("Up to date (v" + APP_VERSION + ") ✓");
+          setTimeout(() => setUpdateStatus(null), 10000);
+          return;
+        }
+        // Step 2: Update available — use Tauri plugin to download & install
+        setUpdateStatus(null);
+        const yes = window.confirm("GangOwl v" + remoteVer + " is available (you have v" + APP_VERSION + "). Update now?");
+        if (!yes) { setUpdateStatus("Update skipped"); return; }
+        setUpdateStatus("Downloading v" + remoteVer + "...");
         const { check } = await import("@tauri-apps/plugin-updater");
         const { relaunch } = await import("@tauri-apps/plugin-process");
         const update = await check();
-        if (update?.available) {
-          setUpdateStatus(null);
-          const yes = window.confirm(`GangOwl ${update.version} is available. Update now?`);
-          if (yes) {
-            setUpdateStatus(`Downloading ${update.version}...`);
-            await update.downloadAndInstall();
-            await relaunch();
-          }
+        if (update) {
+          let downloaded = 0, total = 0;
+          await update.downloadAndInstall((evt) => {
+            if (evt.event === "Started") total = evt.data?.contentLength || 0;
+            if (evt.event === "Progress") { downloaded += evt.data?.chunkLength || 0; const pct = total ? Math.round(downloaded/total*100) : 0; setUpdateStatus("Downloading v" + remoteVer + "... " + pct + "%"); }
+            if (evt.event === "Finished") setUpdateStatus("Installing...");
+          });
+          await relaunch();
         } else {
-          setUpdateStatus("Up to date ✓");
-          setTimeout(() => setUpdateStatus(null), 10000);
+          setUpdateStatus("Download failed — please update manually");
         }
       } catch (e) {
         console.error("Update check failed:", e);
-        const msg = "Update check failed: " + e.message;
+        const msg = "Update error: " + (e?.message || String(e));
         setUpdateStatus(msg);
-        alert(msg);
       }
     })();
   }, []);
