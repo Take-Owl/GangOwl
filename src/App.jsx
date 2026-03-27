@@ -804,7 +804,7 @@ export default function GangSheetBuilder() {
   const [updateStatus, setUpdateStatus] = useState(null);
   useEffect(() => {
     if (!window.__TAURI_INTERNALS__) return;
-    const APP_VERSION = "1.3.7";
+    const APP_VERSION = "1.3.8";
     const LATEST_URL = "https://github.com/Take-Owl/GangOwl/releases/latest/download/latest.json";
     (async () => {
       try {

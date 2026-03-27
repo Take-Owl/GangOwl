@@ -17,10 +17,9 @@
     "updater:allow-check",
     "updater:allow-download-and-install",
     "process:allow-restart",
-    "http:default",
-    "http:allow-fetch",
-    "http:allow-fetch-cancel",
-    "http:allow-fetch-read-body",
-    "http:allow-fetch-send"
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://github.com/**" }, { "url": "https://objects.githubusercontent.com/**" }]
+    }
   ]
 }
