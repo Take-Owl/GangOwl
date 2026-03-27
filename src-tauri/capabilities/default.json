@@ -14,6 +14,11 @@
     "fs:allow-exists",
     "fs:allow-mkdir",
     "updater:default",
-    "process:default"
+    "updater:allow-check",
+    "updater:allow-download",
+    "updater:allow-install",
+    "updater:allow-download-and-install",
+    "process:default",
+    "process:allow-restart"
   ]
 }

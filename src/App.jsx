@@ -707,8 +707,7 @@ export default function GangSheetBuilder() {
   const isTablet  = bp === "tablet";
   const isDesktop = bp === "desktop";
 
-  // ── Check for updates on desktop launch ──
-  useEffect(() => { checkForUpdates(); }, []);
+  // Update check is handled by the inline useEffect below (with status display)
 
   // ── Persisted UI state ──
   // All settings/preferences that should survive a page refresh go here.
