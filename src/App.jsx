@@ -804,13 +804,14 @@ export default function GangSheetBuilder() {
   const [updateStatus, setUpdateStatus] = useState(null);
   useEffect(() => {
     if (!window.__TAURI_INTERNALS__) return;
-    const APP_VERSION = "1.3.6";
+    const APP_VERSION = "1.3.7";
     const LATEST_URL = "https://github.com/Take-Owl/GangOwl/releases/latest/download/latest.json";
     (async () => {
       try {
         setUpdateStatus("Checking for updates...");
-        // Step 1: Manually fetch latest.json to check version
-        const resp = await fetch(LATEST_URL);
+        // Step 1: Fetch latest.json via Tauri HTTP plugin (bypasses CORS)
+        const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
+        const resp = await tauriFetch(LATEST_URL, { method: "GET" });
         if (!resp.ok) throw new Error("Could not reach update server (HTTP " + resp.status + ")");
         const latest = await resp.json();
         const remoteVer = latest.version;
