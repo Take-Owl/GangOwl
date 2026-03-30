@@ -918,6 +918,7 @@ export default function GangSheetBuilder() {
   const canvasRef     = useRef(null);
   const canvasWrapRef = useRef(null);
   const fileInputRef  = useRef(null);
+  const autoTrimRef   = useRef(false);
   const tabInputRef   = useRef(null);
   const imgTimer      = useRef(null);
   const frozenOverflow= useRef(null);
@@ -1009,6 +1010,7 @@ export default function GangSheetBuilder() {
 
   const sheetDefaults = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",placements:[],groups:[]};
   const merged = {...sheetDefaults,...active};
+  autoTrimRef.current = merged.autoTrimImport || false;
   const {sheetW,sheetH,sheetDPI,margin,showMargin,showGrid,gridSize,gridStyle,snapToGrid,snapSize,canvasBg,mirrorExport,autoRotateFill,autoRotatePlace,autoDistribute,snapToItems,autoTrimImport,cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius,inkCostPerSqIn,
          placements,groups,uploadedImg,placeW,placeH,lockSide,copies,gap,
          rotation,flipH,flipV,jobNotes,warning} = merged;
@@ -1257,7 +1259,7 @@ export default function GangSheetBuilder() {
     img.onload=()=>{
       cachedImg(url);
       let nw=img.naturalWidth,nh=img.naturalHeight,src=url;
-      if(autoTrimImport){
+      if(autoTrimRef.current){
         const trimmed=trimImage(img);
         if(trimmed){src=trimmed.src;nw=trimmed.naturalW;nh=trimmed.naturalH;cachedImg(src);}
       }
@@ -1632,8 +1634,8 @@ export default function GangSheetBuilder() {
       if(p.locked){ctx.globalAlpha=0.7;} // dim locked layers slightly
       if(fullyOut){
         // Fully out of bounds: show placeholder only, no image
-        ctx.fillStyle=p.color;ctx.globalAlpha=0.15;ctx.fillRect(-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;
-        ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(-pw/2,-ph/2,pw,ph);ctx.setLineDash([]);
+        ctx.fillStyle=p.color;ctx.globalAlpha=0.15;ctx.fillRect(-dw/2,-dh/2,dw,dh);ctx.globalAlpha=1;
+        ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(-dw/2,-dh/2,dw,dh);ctx.setLineDash([]);
       } else if(partialOut){
         // Partially out: clip image to canvas bounds
         ctx.save();
@@ -1671,14 +1673,14 @@ export default function GangSheetBuilder() {
           if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
         }
       }
-      // Draw selection/hover border inside the rotation transform
+      // Draw selection/hover border inside the rotation transform (use dw/dh to match image)
       if(isSel){
-        ctx.strokeStyle=C.amber;ctx.lineWidth=2;ctx.strokeRect(-pw/2-1,-ph/2-1,pw+2,ph+2);
-        const hs=8;[[-pw/2-hs/2,-ph/2-hs/2],[pw/2-hs/2,-ph/2-hs/2],[-pw/2-hs/2,ph/2-hs/2],[pw/2-hs/2,ph/2-hs/2]].forEach(([hx,hy])=>{ctx.fillStyle=C.amber;ctx.fillRect(hx,hy,hs,hs);ctx.strokeStyle="#fff";ctx.lineWidth=1;ctx.strokeRect(hx,hy,hs,hs);});
+        ctx.strokeStyle=C.amber;ctx.lineWidth=2;ctx.strokeRect(-dw/2-1,-dh/2-1,dw+2,dh+2);
+        const hs=8;[[-dw/2-hs/2,-dh/2-hs/2],[dw/2-hs/2,-dh/2-hs/2],[-dw/2-hs/2,dh/2-hs/2],[dw/2-hs/2,dh/2-hs/2]].forEach(([hx,hy])=>{ctx.fillStyle=C.amber;ctx.fillRect(hx,hy,hs,hs);ctx.strokeStyle="#fff";ctx.lineWidth=1;ctx.strokeRect(hx,hy,hs,hs);});
         // Rotation arcs outside corners
         const ro=14;ctx.strokeStyle=C.accentSolid;ctx.lineWidth=1.5;
-        [[-pw/2-ro,-ph/2-ro,0,-Math.PI/2],[pw/2+ro,-ph/2-ro,-Math.PI/2,-Math.PI],[-pw/2-ro,ph/2+ro,Math.PI/2,0],[pw/2+ro,ph/2+ro,Math.PI,Math.PI/2]].forEach(([cx2,cy2,sa,ea])=>{ctx.beginPath();ctx.arc(cx2,cy2,6,sa,ea);ctx.stroke();});
-      } else if(isHov){ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.strokeRect(-pw/2,-ph/2,pw,ph);ctx.setLineDash([]);}
+        [[-dw/2-ro,-dh/2-ro,0,-Math.PI/2],[dw/2+ro,-dh/2-ro,-Math.PI/2,-Math.PI],[-dw/2-ro,dh/2+ro,Math.PI/2,0],[dw/2+ro,dh/2+ro,Math.PI,Math.PI/2]].forEach(([cx2,cy2,sa,ea])=>{ctx.beginPath();ctx.arc(cx2,cy2,6,sa,ea);ctx.stroke();});
+      } else if(isHov){ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.strokeRect(-dw/2,-dh/2,dw,dh);ctx.setLineDash([]);}
       ctx.restore();
     });
     // Smart guides
