@@ -272,8 +272,25 @@ self.onmessage = function(e) {
   const { grid, gw, gh, mask, mw, mh, scanMaxY, step } = e.data;
   let bestX = -1, bestY = -1, bestScore = Infinity;
   const maxY = Math.min(scanMaxY, gh - mh);
+
+  // Find the actual bottom edge of mask content (not just mh)
+  let maskBottom = mh;
+  for (let y = mh - 1; y >= 0; y--) {
+    let hasContent = false;
+    for (let x = 0; x < mw; x++) { if (mask[y * mw + x]) { hasContent = true; break; } }
+    if (hasContent) { maskBottom = y + 1; break; }
+  }
+
+  // Collect candidate positions, scored by how compact the placement is
+  // (bottom-edge scoring encourages nesting into gaps)
+  const MAX_CANDIDATES = 50;
+  let candidates = 0;
+  let firstValidY = -1;
+
   for (let gy = 0; gy <= maxY; gy += step) {
-    if (bestX >= 0 && gy > bestY + mh) break;
+    // Once we have enough candidates, stop scanning rows well past the best
+    if (bestX >= 0 && gy > bestY + mh * 2) break;
+
     for (let gx = 0; gx <= gw - mw; gx += step) {
       let overlap = false;
       for (let my = 0; my < mh && !overlap; my++) {
@@ -287,11 +304,18 @@ self.onmessage = function(e) {
         }
       }
       if (!overlap) {
-        const score = gy * 100000 + gx;
+        if (firstValidY < 0) firstValidY = gy;
+        // Score by bottom edge (lower is better = tighter pack upward)
+        // Tie-break by top edge, then leftmost X
+        const bottomEdge = gy + maskBottom;
+        const score = bottomEdge * 1000000 + gy * 1000 + gx;
         if (score < bestScore) { bestScore = score; bestX = gx; bestY = gy; }
-        break;
+        candidates++;
+        if (candidates >= ${50}) break; // check multiple X positions per row
       }
     }
+    // After first valid row, scan a few more rows to find nestled positions
+    if (firstValidY >= 0 && gy > firstValidY + mh) break;
   }
   self.postMessage({ bestX, bestY, bestScore });
 };`;
