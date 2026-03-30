@@ -1233,7 +1233,6 @@ export default function GangSheetBuilder() {
     for(let y=0;y<sh;y++) for(let x=0;x<sw;x++){
       if(d[(y*sw+x)*4+3]>10){if(y<top)top=y;if(y>bottom)bottom=y;if(x<left)left=x;if(x>right)right=x;}
     }
-    console.log(`[trimImage] scan ${sw}x${sh}, bounds: top=${top} left=${left} bottom=${bottom} right=${right}, original: ${nw}x${nh}`);
     if(bottom<top) return null; // fully transparent
     // Map back to full resolution coordinates (with small safety margin)
     const fLeft=Math.max(0,Math.floor(left/scale)-1);
@@ -1241,17 +1240,10 @@ export default function GangSheetBuilder() {
     const fRight=Math.min(nw-1,Math.ceil((right+1)/scale)+1);
     const fBottom=Math.min(nh-1,Math.ceil((bottom+1)/scale)+1);
     const tw=fRight-fLeft+1,th=fBottom-fTop+1;
-    console.log(`[trimImage] mapped: fLeft=${fLeft} fTop=${fTop} fRight=${fRight} fBottom=${fBottom} tw=${tw} th=${th}`);
-    if(tw>=nw-2&&th>=nh-2){console.log("[trimImage] no meaningful trim");return null;}
-    try{
-      const tc=document.createElement("canvas");tc.width=tw;tc.height=th;
-      const tctx=tc.getContext("2d");
-      if(!tctx){console.log("[trimImage] failed to get 2d context for output");return null;}
-      tctx.drawImage(img,fLeft,fTop,tw,th,0,0,tw,th);
-      const dataUrl=tc.toDataURL("image/png");
-      console.log(`[trimImage] success: ${tw}x${th}, dataUrl length=${dataUrl.length}`);
-      return{src:dataUrl,naturalW:tw,naturalH:th};
-    }catch(e){console.error("[trimImage] crop error:",e);return null;}
+    if(tw>=nw-2&&th>=nh-2) return null; // nothing meaningful to trim
+    const tc=document.createElement("canvas");tc.width=tw;tc.height=th;
+    tc.getContext("2d").drawImage(img,fLeft,fTop,tw,th,0,0,tw,th);
+    return{src:tc.toDataURL("image/png"),naturalW:tw,naturalH:th};
   };
   const loadImageFile=(file)=>{
     const url=URL.createObjectURL(file);
@@ -1260,9 +1252,7 @@ export default function GangSheetBuilder() {
       cachedImg(url);
       let nw=img.naturalWidth,nh=img.naturalHeight,src=url;
       if(autoTrimImport){
-        console.log("[loadImageFile] autoTrim ON, calling trimImage...");
         const trimmed=trimImage(img);
-        console.log("[loadImageFile] trimmed result:", trimmed ? `${trimmed.naturalW}x${trimmed.naturalH}` : "null");
         if(trimmed){src=trimmed.src;nw=trimmed.naturalW;nh=trimmed.naturalH;cachedImg(src);}
       }
       updActive({uploadedImg:{src,naturalW:nw,naturalH:nh,name:file.name},placeW:(nw/sheetDPI).toFixed(3),placeH:(nh/sheetDPI).toFixed(3),warning:""});
