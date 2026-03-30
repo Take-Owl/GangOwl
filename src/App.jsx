@@ -1225,12 +1225,15 @@ export default function GangSheetBuilder() {
     const scale=Math.min(1,MAX_SCAN/Math.max(nw,nh));
     const sw=Math.round(nw*scale),sh=Math.round(nh*scale);
     const c=document.createElement("canvas");c.width=sw;c.height=sh;
-    const ctx=c.getContext("2d");ctx.drawImage(img,0,0,sw,sh);
-    const d=ctx.getImageData(0,0,sw,sh).data;
+    const ctx=c.getContext("2d",{willReadFrequently:true});
+    ctx.drawImage(img,0,0,sw,sh);
+    let d;
+    try{d=ctx.getImageData(0,0,sw,sh).data;}catch(e){console.warn("trimImage getImageData failed:",e);return null;}
     let top=sh,left=sw,bottom=0,right=0;
     for(let y=0;y<sh;y++) for(let x=0;x<sw;x++){
       if(d[(y*sw+x)*4+3]>10){if(y<top)top=y;if(y>bottom)bottom=y;if(x<left)left=x;if(x>right)right=x;}
     }
+    console.log(`[trimImage] scan ${sw}x${sh}, bounds: top=${top} left=${left} bottom=${bottom} right=${right}, original: ${nw}x${nh}`);
     if(bottom<top) return null; // fully transparent
     // Map back to full resolution coordinates (with small safety margin)
     const fLeft=Math.max(0,Math.floor(left/scale)-1);
@@ -1239,6 +1242,16 @@ export default function GangSheetBuilder() {
     const fBottom=Math.min(nh-1,Math.ceil((bottom+1)/scale)+1);
     const tw=fRight-fLeft+1,th=fBottom-fTop+1;
     if(tw>=nw-2&&th>=nh-2) return null; // nothing meaningful to trim
+    // If the trimmed canvas would still be huge, cap it and use drawImage scaling
+    const MAX_OUTPUT=4096*4096;
+    if(tw*th>MAX_OUTPUT){
+      // Scale down the output to fit within limits
+      const outScale=Math.sqrt(MAX_OUTPUT/(tw*th));
+      const otw=Math.round(tw*outScale),oth=Math.round(th*outScale);
+      const tc=document.createElement("canvas");tc.width=otw;tc.height=oth;
+      tc.getContext("2d").drawImage(img,fLeft,fTop,tw,th,0,0,otw,oth);
+      return{src:tc.toDataURL("image/png"),naturalW:otw,naturalH:oth};
+    }
     const tc=document.createElement("canvas");tc.width=tw;tc.height=th;
     tc.getContext("2d").drawImage(img,fLeft,fTop,tw,th,0,0,tw,th);
     return{src:tc.toDataURL("image/png"),naturalW:tw,naturalH:th};
