@@ -396,11 +396,17 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
     scanMaxY = Math.min(gh, Math.max(scanMaxY, bestPos.y + bestMask.h + Math.ceil((hIn + gap) * NEST_PPI)));
 
     const isRot = bestRot === 90 || bestRot === 270;
+    // Calculate footprint position: the mask was placed for the rotated item,
+    // but we store ORIGINAL w/h so rendering draws at correct proportions.
+    // Adjust x/y so the center matches: footprint center = content center
+    const fpW = isRot ? hIn : wIn, fpH = isRot ? wIn : hIn;
+    const cx = (bestPos.x + bestMask.contentOffsetX) / NEST_PPI + fpW / 2;
+    const cy = (bestPos.y + bestMask.contentOffsetY) / NEST_PPI + fpH / 2;
     results.push({
-      x: (bestPos.x + bestMask.contentOffsetX) / NEST_PPI,
-      y: (bestPos.y + bestMask.contentOffsetY) / NEST_PPI,
-      w: isRot ? hIn : wIn,
-      h: isRot ? wIn : hIn,
+      x: cx - wIn / 2,
+      y: cy - hIn / 2,
+      w: wIn,
+      h: hIn,
       rotation: bestRot,
     });
   }
@@ -1618,18 +1624,6 @@ export default function GangSheetBuilder() {
       // Check if placement is fully outside canvas bounds
       const fullyOut=p.x+p.w<=0||p.x>=sheetW||p.y+p.h<=0||p.y>=sheetH;
       const partialOut=!fullyOut&&(p.x<0||p.y<0||p.x+p.w>sheetW||p.y+p.h>sheetH);
-      // For rotated items where w/h were swapped (nesting), un-swap for drawImage
-      // Detect: if rotation is 90/270 AND p.w/p.h ratio is inverted vs natural, w/h were swapped
-      const isRot90 = p.rotation === 90 || p.rotation === 270;
-      let imgW = pw, imgH = ph;
-      if (isRot90 && imgObj.naturalWidth && imgObj.naturalHeight) {
-        const natAR = imgObj.naturalWidth / imgObj.naturalHeight;
-        const placeAR = p.w / p.h;
-        // If placement AR is inverted relative to natural AR, w/h were swapped by nesting
-        if ((natAR > 1 && placeAR < 1) || (natAR < 1 && placeAR > 1) || (Math.abs(natAR - 1/placeAR) < Math.abs(natAR - placeAR) && Math.abs(natAR - placeAR) > 0.05)) {
-          imgW = ph; imgH = pw; // un-swap for drawing
-        }
-      }
       ctx.save();ctx.translate(px+pw/2,py+ph/2);if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
       if(p.locked){ctx.globalAlpha=0.7;} // dim locked layers slightly
       if(fullyOut){
