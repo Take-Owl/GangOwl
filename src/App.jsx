@@ -396,17 +396,12 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
     scanMaxY = Math.min(gh, Math.max(scanMaxY, bestPos.y + bestMask.h + Math.ceil((hIn + gap) * NEST_PPI)));
 
     const isRot = bestRot === 90 || bestRot === 270;
-    // Calculate footprint position: the mask was placed for the rotated item,
-    // but we store ORIGINAL w/h so rendering draws at correct proportions.
-    // Adjust x/y so the center matches: footprint center = content center
     const fpW = isRot ? hIn : wIn, fpH = isRot ? wIn : hIn;
-    const cx = (bestPos.x + bestMask.contentOffsetX) / NEST_PPI + fpW / 2;
-    const cy = (bestPos.y + bestMask.contentOffsetY) / NEST_PPI + fpH / 2;
     results.push({
-      x: cx - wIn / 2,
-      y: cy - hIn / 2,
-      w: wIn,
-      h: hIn,
+      x: (bestPos.x + bestMask.contentOffsetX) / NEST_PPI,
+      y: (bestPos.y + bestMask.contentOffsetY) / NEST_PPI,
+      w: fpW,
+      h: fpH,
       rotation: bestRot,
     });
   }
@@ -1624,6 +1619,10 @@ export default function GangSheetBuilder() {
       // Check if placement is fully outside canvas bounds
       const fullyOut=p.x+p.w<=0||p.x>=sheetW||p.y+p.h<=0||p.y>=sheetH;
       const partialOut=!fullyOut&&(p.x<0||p.y<0||p.x+p.w>sheetW||p.y+p.h>sheetH);
+      // For 90/270° rotated items, w/h are the footprint (swapped).
+      // drawImage needs original proportions so the image isn't warped.
+      const isRot90 = p.rotation === 90 || p.rotation === 270;
+      const dw = isRot90 ? ph : pw, dh = isRot90 ? pw : ph;
       ctx.save();ctx.translate(px+pw/2,py+ph/2);if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
       if(p.locked){ctx.globalAlpha=0.7;} // dim locked layers slightly
       if(fullyOut){
@@ -1637,33 +1636,33 @@ export default function GangSheetBuilder() {
         const cpx=spx(Math.max(0,p.x))-px-pw/2,cpy=spx(Math.max(0,p.y))-py-ph/2;
         const cpw=spx(Math.min(sheetW,p.x+p.w)-Math.max(0,p.x)),cph=spx(Math.min(sheetH,p.y+p.h)-Math.max(0,p.y));
         if(!p.rotation){ctx.beginPath();ctx.rect(cpx,cpy,cpw,cph);ctx.clip();}
-        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
-        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
+        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-dw/2,-dh/2,dw,dh);ctx.globalAlpha=1;}
+        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-dw/2,-dh/2,dw,dh);ctx.globalAlpha=1;}
         ctx.restore();
         // Draw dashed border on the out-of-bounds portion
         ctx.strokeStyle=p.color;ctx.lineWidth=1;ctx.globalAlpha=0.4;ctx.setLineDash([4,3]);ctx.strokeRect(-pw/2,-ph/2,pw,ph);ctx.setLineDash([]);ctx.globalAlpha=1;
       } else {
-        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
-        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
+        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-dw/2,-dh/2,dw,dh);ctx.globalAlpha=1;}
+        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-dw/2,-dh/2,dw,dh);ctx.globalAlpha=1;}
       }
       // Draw cut contour line (per-placement)
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
         if(p.cutShape==="die-cut"){
           const osPx=spx(p.cutOffset||0);
-          const key=`dc_${p.src.substring(0,40)}_${imgW.toFixed(0)}_${imgH.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}_${p.cutWidth||1}`;
+          const key=`dc_${p.src.substring(0,40)}_${dw.toFixed(0)}_${dh.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}_${p.cutWidth||1}`;
           if(!dieCutCache.has(key)){
-            const r=buildDieCutCanvas(cachedImg(p.src),imgW,imgH,osPx,p.cutColor,p.cutWidth||1);
+            const r=buildDieCutCanvas(cachedImg(p.src),dw,dh,osPx,p.cutColor,p.cutWidth||1);
             if(r)dieCutCache.set(key,r);
             if(dieCutCache.size>100){dieCutCache.delete(dieCutCache.keys().next().value);}
           }
           const dc=dieCutCache.get(key);
           if(dc){
-            const sx=imgW/dc.cw, sy=imgH/dc.ch;
-            ctx.drawImage(dc.canvas,-dc.pad*sx-imgW/2,-dc.pad*sy-imgH/2,dc.tw*sx,dc.th*sy);
+            const sx=dw/dc.cw, sy=dh/dc.ch;
+            ctx.drawImage(dc.canvas,-dc.pad*sx-dw/2,-dc.pad*sy-dh/2,dc.tw*sx,dc.th*sy);
           }
         } else {
           const osPx=spx(p.cutOffset||0),rPx=spx(p.cutRadius||0);
-          const contour=getCutContour(p.src,p.cutShape,imgW,imgH,osPx,rPx);
+          const contour=getCutContour(p.src,p.cutShape,dw,dh,osPx,rPx);
           if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
         }
       }
