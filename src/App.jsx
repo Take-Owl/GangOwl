@@ -1791,7 +1791,7 @@ export default function GangSheetBuilder() {
     const r=canvasRef.current.getBoundingClientRect();
     return{x:(cx-r.left)/(SCREEN_DPI*previewScale*zoom)-oL,y:(cy-r.top)/(SCREEN_DPI*previewScale*zoom)-oT};
   };
-  const hitTest=(x,y)=>{for(let i=placements.length-1;i>=0;i--){const p=placements[i];if(p.visible===false)continue;if(p.rotation){const{lx,ly}=toLocal(x,y,p);if(lx>=p.x&&lx<=p.x+p.w&&ly>=p.y&&ly<=p.y+p.h)return p;}else{if(x>=p.x&&x<=p.x+p.w&&y>=p.y&&y<=p.y+p.h)return p;}}return null;};
+  const hitTest=(x,y)=>{for(let i=placements.length-1;i>=0;i--){const p=placements[i];if(p.visible===false)continue;if(p.rotation){const{lx,ly}=toLocal(x,y,p);const isR=p.rotation===90||p.rotation===270;const hw=isR?p.h:p.w,hh=isR?p.w:p.h;const cx2=p.x+p.w/2,cy2=p.y+p.h/2;if(lx>=cx2-hw/2&&lx<=cx2+hw/2&&ly>=cy2-hh/2&&ly<=cy2+hh/2)return p;}else{if(x>=p.x&&x<=p.x+p.w&&y>=p.y&&y<=p.y+p.h)return p;}}return null;};
 
   // ── Transform point into placement's local (un-rotated) space ──
   const toLocal=(x,y,p)=>{
@@ -1807,9 +1807,13 @@ export default function GangSheetBuilder() {
     const p=selectedItem;
     const{lx,ly}=toLocal(x,y,p);
     const hs=Math.max(0.2, 8/(SCREEN_DPI*previewScale*zoom));
+    // Use original (un-swapped) dimensions to match visual handle positions
+    const isR90=p.rotation===90||p.rotation===270;
+    const hw=isR90?p.h:p.w, hh=isR90?p.w:p.h;
+    const cx=p.x+p.w/2, cy=p.y+p.h/2;
     const corners=[
-      {corner:"tl",cx:p.x,cy:p.y},{corner:"tr",cx:p.x+p.w,cy:p.y},
-      {corner:"bl",cx:p.x,cy:p.y+p.h},{corner:"br",cx:p.x+p.w,cy:p.y+p.h},
+      {corner:"tl",cx:cx-hw/2,cy:cy-hh/2},{corner:"tr",cx:cx+hw/2,cy:cy-hh/2},
+      {corner:"bl",cx:cx-hw/2,cy:cy+hh/2},{corner:"br",cx:cx+hw/2,cy:cy+hh/2},
     ];
     for(const c of corners) if(Math.abs(lx-c.cx)<hs&&Math.abs(ly-c.cy)<hs) return c;
     return null;
@@ -1821,9 +1825,12 @@ export default function GangSheetBuilder() {
     const{lx,ly}=toLocal(x,y,p);
     const ro=Math.max(0.3, 14/(SCREEN_DPI*previewScale*zoom));
     const hs=Math.max(0.2, 10/(SCREEN_DPI*previewScale*zoom));
+    const isR90=p.rotation===90||p.rotation===270;
+    const hw=isR90?p.h:p.w, hh=isR90?p.w:p.h;
+    const cx=p.x+p.w/2, cy=p.y+p.h/2;
     const corners=[
-      {cx:p.x-ro,cy:p.y-ro},{cx:p.x+p.w+ro,cy:p.y-ro},
-      {cx:p.x-ro,cy:p.y+p.h+ro},{cx:p.x+p.w+ro,cy:p.y+p.h+ro},
+      {cx:cx-hw/2-ro,cy:cy-hh/2-ro},{cx:cx+hw/2+ro,cy:cy-hh/2-ro},
+      {cx:cx-hw/2-ro,cy:cy+hh/2+ro},{cx:cx+hw/2+ro,cy:cy+hh/2+ro},
     ];
     for(const c of corners) if(Math.abs(lx-c.cx)<hs&&Math.abs(ly-c.cy)<hs) return c;
     return null;
