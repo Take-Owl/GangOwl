@@ -1219,18 +1219,28 @@ export default function GangSheetBuilder() {
 
   // ── Upload ──
   const trimImage=(img)=>{
-    const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;
-    const ctx=c.getContext("2d");ctx.drawImage(img,0,0);
-    const d=ctx.getImageData(0,0,c.width,c.height).data;
-    let top=c.height,left=c.width,bottom=0,right=0;
-    for(let y=0;y<c.height;y++) for(let x=0;x<c.width;x++){
-      if(d[(y*c.width+x)*4+3]>10){if(y<top)top=y;if(y>bottom)bottom=y;if(x<left)left=x;if(x>right)right=x;}
+    const nw=img.naturalWidth,nh=img.naturalHeight;
+    // For large images, scan at reduced resolution to find trim bounds, then crop at full res
+    const MAX_SCAN=2048;
+    const scale=Math.min(1,MAX_SCAN/Math.max(nw,nh));
+    const sw=Math.round(nw*scale),sh=Math.round(nh*scale);
+    const c=document.createElement("canvas");c.width=sw;c.height=sh;
+    const ctx=c.getContext("2d");ctx.drawImage(img,0,0,sw,sh);
+    const d=ctx.getImageData(0,0,sw,sh).data;
+    let top=sh,left=sw,bottom=0,right=0;
+    for(let y=0;y<sh;y++) for(let x=0;x<sw;x++){
+      if(d[(y*sw+x)*4+3]>10){if(y<top)top=y;if(y>bottom)bottom=y;if(x<left)left=x;if(x>right)right=x;}
     }
     if(bottom<top) return null; // fully transparent
-    const tw=right-left+1,th=bottom-top+1;
-    if(tw===img.naturalWidth&&th===img.naturalHeight) return null; // nothing to trim
+    // Map back to full resolution coordinates (with small safety margin)
+    const fLeft=Math.max(0,Math.floor(left/scale)-1);
+    const fTop=Math.max(0,Math.floor(top/scale)-1);
+    const fRight=Math.min(nw-1,Math.ceil((right+1)/scale)+1);
+    const fBottom=Math.min(nh-1,Math.ceil((bottom+1)/scale)+1);
+    const tw=fRight-fLeft+1,th=fBottom-fTop+1;
+    if(tw>=nw-2&&th>=nh-2) return null; // nothing meaningful to trim
     const tc=document.createElement("canvas");tc.width=tw;tc.height=th;
-    tc.getContext("2d").drawImage(c,left,top,tw,th,0,0,tw,th);
+    tc.getContext("2d").drawImage(img,fLeft,fTop,tw,th,0,0,tw,th);
     return{src:tc.toDataURL("image/png"),naturalW:tw,naturalH:th};
   };
   const loadImageFile=(file)=>{
@@ -1606,12 +1616,14 @@ export default function GangSheetBuilder() {
       // Check if placement is fully outside canvas bounds
       const fullyOut=p.x+p.w<=0||p.x>=sheetW||p.y+p.h<=0||p.y>=sheetH;
       const partialOut=!fullyOut&&(p.x<0||p.y<0||p.x+p.w>sheetW||p.y+p.h>sheetH);
+      const isRotSwap = p.rotation === 90 || p.rotation === 270;
+      const drawW = isRotSwap ? ph : pw, drawH = isRotSwap ? pw : ph;
       ctx.save();ctx.translate(px+pw/2,py+ph/2);if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
       if(p.locked){ctx.globalAlpha=0.7;} // dim locked layers slightly
       if(fullyOut){
         // Fully out of bounds: show placeholder only, no image
-        ctx.fillStyle=p.color;ctx.globalAlpha=0.15;ctx.fillRect(-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;
-        ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(-pw/2,-ph/2,pw,ph);ctx.setLineDash([]);
+        ctx.fillStyle=p.color;ctx.globalAlpha=0.15;ctx.fillRect(-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;
+        ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(-drawW/2,-drawH/2,drawW,drawH);ctx.setLineDash([]);
       } else if(partialOut){
         // Partially out: clip image to canvas bounds
         ctx.save();
@@ -1619,35 +1631,33 @@ export default function GangSheetBuilder() {
         const cpx=spx(Math.max(0,p.x))-px-pw/2,cpy=spx(Math.max(0,p.y))-py-ph/2;
         const cpw=spx(Math.min(sheetW,p.x+p.w)-Math.max(0,p.x)),cph=spx(Math.min(sheetH,p.y+p.h)-Math.max(0,p.y));
         if(!p.rotation){ctx.beginPath();ctx.rect(cpx,cpy,cpw,cph);ctx.clip();}
-        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
-        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
+        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
+        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
         ctx.restore();
         // Draw dashed border on the out-of-bounds portion
-        ctx.strokeStyle=p.color;ctx.lineWidth=1;ctx.globalAlpha=0.4;ctx.setLineDash([4,3]);ctx.strokeRect(-pw/2,-ph/2,pw,ph);ctx.setLineDash([]);ctx.globalAlpha=1;
+        ctx.strokeStyle=p.color;ctx.lineWidth=1;ctx.globalAlpha=0.4;ctx.setLineDash([4,3]);ctx.strokeRect(-drawW/2,-drawH/2,drawW,drawH);ctx.setLineDash([]);ctx.globalAlpha=1;
       } else {
-        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
-        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;}
+        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
+        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
       }
       // Draw cut contour line (per-placement)
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
         if(p.cutShape==="die-cut"){
           const osPx=spx(p.cutOffset||0);
-          const key=`dc_${p.src.substring(0,40)}_${pw.toFixed(0)}_${ph.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}_${p.cutWidth||1}`;
+          const key=`dc_${p.src.substring(0,40)}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}_${p.cutWidth||1}`;
           if(!dieCutCache.has(key)){
-            const r=buildDieCutCanvas(cachedImg(p.src),pw,ph,osPx,p.cutColor,p.cutWidth||1);
+            const r=buildDieCutCanvas(cachedImg(p.src),drawW,drawH,osPx,p.cutColor,p.cutWidth||1);
             if(r)dieCutCache.set(key,r);
             if(dieCutCache.size>100){dieCutCache.delete(dieCutCache.keys().next().value);}
           }
           const dc=dieCutCache.get(key);
           if(dc){
-            // dc.canvas is tw×th, image occupies cw×ch starting at (pad,pad)
-            // Draw so that the image portion aligns with the placement (-pw/2,-ph/2,pw,ph)
-            const sx=pw/dc.cw, sy=ph/dc.ch;
-            ctx.drawImage(dc.canvas,-dc.pad*sx-pw/2,-dc.pad*sy-ph/2,dc.tw*sx,dc.th*sy);
+            const sx=drawW/dc.cw, sy=drawH/dc.ch;
+            ctx.drawImage(dc.canvas,-dc.pad*sx-drawW/2,-dc.pad*sy-drawH/2,dc.tw*sx,dc.th*sy);
           }
         } else {
           const osPx=spx(p.cutOffset||0),rPx=spx(p.cutRadius||0);
-          const contour=getCutContour(p.src,p.cutShape,pw,ph,osPx,rPx);
+          const contour=getCutContour(p.src,p.cutShape,drawW,drawH,osPx,rPx);
           if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
         }
       }
@@ -2111,15 +2121,17 @@ export default function GangSheetBuilder() {
       ctx.translate(px2-tileX+pw2/2,py2-tileY+ph2/2);
       if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);
       if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
-      ctx.drawImage(img,-pw2/2,-ph2/2,pw2,ph2);
+      const isRotExport = p.rotation === 90 || p.rotation === 270;
+      const edw = isRotExport ? ph2 : pw2, edh = isRotExport ? pw2 : ph2;
+      ctx.drawImage(img,-edw/2,-edh/2,edw,edh);
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
         if(p.cutShape==="die-cut"){
           const osPx=ipx(p.cutOffset||0,dpi);
-          const dc=buildDieCutCanvas(img,pw2,ph2,osPx,p.cutColor,p.cutWidth||1);
-          if(dc){const sx=pw2/dc.cw,sy=ph2/dc.ch;ctx.drawImage(dc.canvas,-dc.pad*sx-pw2/2,-dc.pad*sy-ph2/2,dc.tw*sx,dc.th*sy);}
+          const dc=buildDieCutCanvas(img,edw,edh,osPx,p.cutColor,p.cutWidth||1);
+          if(dc){const sx=edw/dc.cw,sy=edh/dc.ch;ctx.drawImage(dc.canvas,-dc.pad*sx-edw/2,-dc.pad*sy-edh/2,dc.tw*sx,dc.th*sy);}
         } else {
           const osPx=ipx(p.cutOffset||0,dpi),rPx=ipx(p.cutRadius||0,dpi);
-          const contour=getCutContour(p.src,p.cutShape,pw2,ph2,osPx,rPx);
+          const contour=getCutContour(p.src,p.cutShape,edw,edh,osPx,rPx);
           if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
         }
       }
