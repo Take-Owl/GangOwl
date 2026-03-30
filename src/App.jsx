@@ -340,7 +340,12 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
       }
       continue;
     }
-    const epMask = buildItemMask(eImg, ep.w, ep.h, ep.cutEnabled||false, ep.cutShape||"none", ep.cutOffset||0, ep.cutRadius||0, ep.rotation||0);
+    // ep.w/ep.h are the footprint (swapped for 90/270 rotated items).
+    // buildItemMask applies rotation internally, so pass original dimensions.
+    const epRot = ep.rotation || 0;
+    const epIsRot = epRot === 90 || epRot === 270;
+    const epOrigW = epIsRot ? ep.h : ep.w, epOrigH = epIsRot ? ep.w : ep.h;
+    const epMask = buildItemMask(eImg, epOrigW, epOrigH, ep.cutEnabled||false, ep.cutShape||"none", ep.cutOffset||0, ep.cutRadius||0, epRot);
     const dilated = dilateMask(epMask.mask, epMask.w, epMask.h, halfGapPx);
     const stampX = Math.floor(ep.x * NEST_PPI) - epMask.contentOffsetX - dilated.pad;
     const stampY = Math.floor(ep.y * NEST_PPI) - epMask.contentOffsetY - dilated.pad;
