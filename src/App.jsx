@@ -32,9 +32,9 @@ function makeSheet(o = {}) {
     uploadedImg: null, placeW: "", placeH: "",
     lockSide: "width", copies: 1, gap: 0.25,
     rotation: 0, flipH: false, flipV: false,
-    zoom: 1, scrollX: 0, scrollY: 0, mirrorExport: false, autoRotateFill: false, autoRotatePlace: false, autoDistribute: false, snapToItems: false, autoTrimImport: false,
+    zoom: 1, scrollX: 0, scrollY: 0, mirrorExport: false, autoRotateFill: false, autoRotatePlace: false, autoDistribute: false, snapToItems: false, autoTrimImport: true,
     cutEnabled: false, cutShape: "rounded-rect", cutOffset: 0.05, cutWidth: 1, cutColor: "#FF0000", cutRadius: 0.1,
-    jobNotes: "", warning: "",
+    jobNotes: "", warning: "", extraSizes: [],
     ...o,
   };
 }
@@ -271,33 +271,70 @@ const nestWorkerCode = `
 self.onmessage = function(e) {
   const { grid, gw, gh, mask, mw, mh, scanMaxY, step } = e.data;
   let bestX = -1, bestY = -1, bestScore = Infinity;
-  const maxY = Math.min(scanMaxY, gh - mh);
+  const maxY = Math.min(scanMaxY, gh);
 
-  // Find the actual bottom edge of mask content (not just mh)
-  let maskBottom = mh;
-  for (let y = mh - 1; y >= 0; y--) {
-    let hasContent = false;
-    for (let x = 0; x < mw; x++) { if (mask[y * mw + x]) { hasContent = true; break; } }
-    if (hasContent) { maskBottom = y + 1; break; }
+  // Find actual mask content bounds
+  let maskBottom = mh, maskTop = 0, maskLeft = mw, maskRight = 0;
+  let maskPixelCount = 0;
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+    if (mask[y * mw + x]) {
+      maskPixelCount++;
+      if (y < maskTop || maskPixelCount === 1) maskTop = y;
+      if (y + 1 > maskBottom) maskBottom = y + 1;
+      if (x < maskLeft) maskLeft = x;
+      if (x + 1 > maskRight) maskRight = x + 1;
+    }
   }
 
-  // Collect candidate positions, scored by how compact the placement is
-  // (bottom-edge scoring encourages nesting into gaps)
-  const MAX_CANDIDATES = 50;
-  let candidates = 0;
+  // Precompute mask border pixels (for neighbor density scoring)
+  // These are mask pixels that have at least one non-mask neighbor
+  const borderPixels = [];
+  const sampleStep = Math.max(1, Math.floor(Math.sqrt(maskPixelCount) / 12));
+  for (let y = maskTop; y < maskBottom; y += sampleStep) {
+    for (let x = maskLeft; x < maskRight; x += sampleStep) {
+      if (!mask[y * mw + x]) continue;
+      let isBorder = false;
+      if (y === 0 || !mask[(y-1)*mw+x]) isBorder = true;
+      else if (y === mh-1 || !mask[(y+1)*mw+x]) isBorder = true;
+      else if (x === 0 || !mask[y*mw+x-1]) isBorder = true;
+      else if (x === mw-1 || !mask[y*mw+x+1]) isBorder = true;
+      if (isBorder) borderPixels.push([x, y]);
+    }
+  }
+  const maxBorderSamples = Math.min(borderPixels.length, 80);
+
+  // Neighbor density: count how many grid cells adjacent to the mask border are occupied
+  function neighborDensity(gx, gy) {
+    let touching = 0, checked = 0;
+    const bStep = Math.max(1, Math.floor(borderPixels.length / maxBorderSamples));
+    for (let i = 0; i < borderPixels.length; i += bStep) {
+      const bx = borderPixels[i][0], by = borderPixels[i][1];
+      const sx = gx + bx, sy = gy + by;
+      checked++;
+      // Check 4-neighbors outside the mask
+      for (let d = 0; d < 4; d++) {
+        const nx = sx + (d===0?-1:d===1?1:0), ny = sy + (d===2?-1:d===3?1:0);
+        if (nx >= 0 && nx < gw && ny >= 0 && ny < gh && grid[ny * gw + nx]) touching++;
+      }
+    }
+    return checked > 0 ? touching / (checked * 4) : 0; // 0..1 ratio
+  }
+
   let firstValidY = -1;
+  let candidateCount = 0;
 
   for (let gy = 0; gy <= maxY; gy += step) {
-    // Once we have enough candidates, stop scanning rows well past the best
-    if (bestX >= 0 && gy > bestY + mh * 2) break;
+    if (gy + maskTop >= gh && gy + maskTop >= maxY) break;
+    // Scan further to find nestled positions
+    if (bestX >= 0 && gy > bestY + mh * 3) break;
 
-    for (let gx = 0; gx <= gw - mw; gx += step) {
+    for (let gx = 0; gx <= gw - (maskRight - maskLeft); gx += step) {
       let overlap = false;
-      for (let my = 0; my < mh && !overlap; my++) {
+      for (let my = maskTop; my < maskBottom && !overlap; my++) {
         const sy = gy + my;
         if (sy < 0 || sy >= gh) { overlap = true; break; }
         const gRow = sy * gw, mRow = my * mw;
-        for (let mx = 0; mx < mw; mx++) {
+        for (let mx = maskLeft; mx < maskRight; mx++) {
           if (!mask[mRow + mx]) continue;
           const sx = gx + mx;
           if (sx < 0 || sx >= gw || grid[gRow + sx]) { overlap = true; break; }
@@ -305,17 +342,20 @@ self.onmessage = function(e) {
       }
       if (!overlap) {
         if (firstValidY < 0) firstValidY = gy;
-        // Score by bottom edge (lower is better = tighter pack upward)
-        // Tie-break by top edge, then leftmost X
         const bottomEdge = gy + maskBottom;
-        const score = bottomEdge * 1000000 + gy * 1000 + gx;
+        // Compute neighbor density — how well this position fills gaps
+        const density = neighborDensity(gx, gy);
+        // Score: lower is better
+        // Primary: bottom edge (pack upward)
+        // Bonus: subtract density * weight (filling gaps is rewarded)
+        const densityBonus = density * mh * 500;
+        const score = bottomEdge * 1000000 + gy * 1000 + gx - densityBonus;
         if (score < bestScore) { bestScore = score; bestX = gx; bestY = gy; }
-        candidates++;
-        if (candidates >= ${50}) break; // check multiple X positions per row
+        candidateCount++;
+        if (candidateCount >= 200) break;
       }
     }
-    // After first valid row, scan a few more rows to find nestled positions
-    if (firstValidY >= 0 && gy > firstValidY + mh) break;
+    if (firstValidY >= 0 && gy > firstValidY + mh * 2) break;
   }
   self.postMessage({ bestX, bestY, bestScore });
 };`;
@@ -711,9 +751,13 @@ function Drawer({ open, onClose, title, children, height="85vh" }) {
 }
 
 // ─── Context menu (long-press on canvas item) ─────────────────────────────────
-function ContextMenu({ x, y, onClose, onDelete, onDuplicate, onRotate, onFlipH, onFlipV, onTrim }) {
+function ContextMenu({ x, y, onClose, onDelete, onDuplicate, onRotate, onFlipH, onFlipV, onTrim, onCopy, onPaste, canvasOnly }) {
   if (x === null) return null;
-  const items = [
+  const items = canvasOnly ? [
+    {label:"📌 Paste", fn:()=>{onPaste();onClose();}},
+  ] : [
+    {label:"📋 Copy", fn:()=>{onCopy();onClose();}},
+    {label:"📌 Paste", fn:()=>{onPaste();onClose();}},
     {label:"↻ Rotate 90°", fn:()=>{onRotate(90);onClose();}},
     {label:"↺ Rotate −90°", fn:()=>{onRotate(-90);onClose();}},
     {label:"↔ Flip H", fn:()=>{onFlipH();onClose();}},
@@ -748,7 +792,7 @@ export default function GangSheetBuilder() {
   // All settings/preferences that should survive a page refresh go here.
   // Any future state additions here are automatically persisted.
   const UI_KEY = "gangsheet-ui-state";
-  const SHEET_DEFAULTS = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",zoom:1,scrollX:0,scrollY:0,mirrorExport:false,autoRotateFill:false,autoRotatePlace:false,autoDistribute:false,snapToItems:false,autoTrimImport:false,cutEnabled:false,cutShape:"rounded-rect",cutOffset:0.05,cutWidth:1,cutColor:"#FF0000",cutRadius:0.1};
+  const SHEET_DEFAULTS = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",zoom:1,scrollX:0,scrollY:0,mirrorExport:false,autoRotateFill:false,autoRotatePlace:false,autoDistribute:false,snapToItems:false,autoTrimImport:true,cutEnabled:false,cutShape:"rounded-rect",cutOffset:0.05,cutWidth:1,cutColor:"#FF0000",cutRadius:0.1};
   const loadUIState = () => {
     try {
       const raw = localStorage.getItem(UI_KEY);
@@ -948,6 +992,7 @@ export default function GangSheetBuilder() {
   const canvasWrapRef = useRef(null);
   const fileInputRef  = useRef(null);
   const autoTrimRef   = useRef(false);
+  const clipboardRef  = useRef(null); // {placements: [...], groups: [...]} for copy/paste across sheets
   const tabInputRef   = useRef(null);
   const imgTimer      = useRef(null);
   const frozenOverflow= useRef(null);
@@ -1037,12 +1082,12 @@ export default function GangSheetBuilder() {
     setSheets(prev=>prev.map(s=>s.id===activeId?{...s,...(typeof patch==="function"?patch(s):patch)}:s));
   },[activeId]);
 
-  const sheetDefaults = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",placements:[],groups:[]};
+  const sheetDefaults = {showGrid:true,gridSize:0.5,gridStyle:"lines",snapToGrid:false,snapSize:0.25,canvasBg:"checker",placements:[],groups:[],extraSizes:[]};
   const merged = {...sheetDefaults,...active};
   autoTrimRef.current = merged.autoTrimImport || false;
   const {sheetW,sheetH,sheetDPI,margin,showMargin,showGrid,gridSize,gridStyle,snapToGrid,snapSize,canvasBg,mirrorExport,autoRotateFill,autoRotatePlace,autoDistribute,snapToItems,autoTrimImport,cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius,inkCostPerSqIn,
          placements,groups,uploadedImg,placeW,placeH,lockSide,copies,gap,
-         rotation,flipH,flipV,jobNotes,warning} = merged;
+         rotation,flipH,flipV,jobNotes,warning,extraSizes} = merged;
 
   // ── Derived ──
   const usableSqIn = (sheetW-margin*2)*(sheetH-margin*2);
@@ -1156,6 +1201,9 @@ export default function GangSheetBuilder() {
       if(e.ctrlKey&&e.key==="r"&&!inInput(e)){e.preventDefault();setShowRulers(r=>!r);}
       // Delete/Backspace to delete selected
       if((e.key==="Delete"||e.key==="Backspace")&&!inInput(e)){e.preventDefault();ka.deleteSelected();}
+      // Ctrl+C to copy, Ctrl+V to paste
+      if(e.ctrlKey&&e.key.toLowerCase()==="c"&&!inInput(e)){e.preventDefault();ka.copySelected();}
+      if(e.ctrlKey&&e.key.toLowerCase()==="v"&&!inInput(e)){e.preventDefault();ka.pasteFromClipboard();}
       // Ctrl+D to duplicate
       if(e.ctrlKey&&e.key==="d"&&!inInput(e)){e.preventDefault();ka.duplicateSelected();}
       // Ctrl+A to select all (cycle: group → all)
@@ -1288,7 +1336,18 @@ export default function GangSheetBuilder() {
     img.onload=()=>{
       cachedImg(url);
       let nw=img.naturalWidth,nh=img.naturalHeight,src=url;
-      if(autoTrimRef.current){
+      // Read trim setting from multiple sources to handle race conditions
+      // 1. Check ref (updated every render)
+      // 2. Also check the DOM toggle element as fallback
+      let doTrim=autoTrimRef.current;
+      if(!doTrim){
+        // Fallback: read directly from the sheets state
+        try{
+          const el=document.querySelector('[data-autotrim]');
+          if(el&&el.dataset.autotrim==='true') doTrim=true;
+        }catch(e){}
+      }
+      if(doTrim){
         const trimmed=trimImage(img);
         if(trimmed){src=trimmed.src;nw=trimmed.naturalW;nh=trimmed.naturalH;cachedImg(src);}
       }
@@ -1298,26 +1357,26 @@ export default function GangSheetBuilder() {
     };
     img.src=url;
   };
-  const onFile=e=>{
-    const files=[...e.target.files]; e.target.value="";
-    if(!files.length) return;
-    if(files.length===1){loadImageFile(files[0]);return;}
-    // Multi-file: auto-place each image
-    files.forEach(file=>{
+  const loadBatchFiles=async(files)=>{
+    const items=await Promise.all(files.map(file=>new Promise(resolve=>{
       const url=URL.createObjectURL(file);
       const img=new Image();
       img.onload=()=>{
         cachedImg(url);
-        const w=(img.naturalWidth/sheetDPI),h=(img.naturalHeight/sheetDPI);
-        const g=parseFloat(gap)||0,m=parseFloat(margin)||0;
-        const packed=packItems(placements,w,h,g,sheetW,sheetH,1,m);
-        if(!packed.length) return;
-        const color=nextColor(),groupId=uid(),shortName=file.name.replace(/\.[^.]+$/,"");
-        updActive(s=>({groups:[...s.groups,{id:groupId,name:shortName,color,src:url,w,h,gap:g,naturalW:img.naturalWidth,naturalH:img.naturalHeight,notes:""}],
-          placements:[...s.placements,...packed.map(p=>({id:uid(),groupId,color,src:url,name:file.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation:0,flipH:false,flipV:false,naturalW:img.naturalWidth,naturalH:img.naturalHeight}))]}));
+        let src=url,nw=img.naturalWidth,nh=img.naturalHeight,trimmed=false,originalSrc=url;
+        if(autoTrimRef.current){const t=trimImage(img);if(t){src=t.src;nw=t.naturalW;nh=t.naturalH;cachedImg(src);trimmed=true;}}
+        resolve({id:uid(),file,src,originalSrc,name:file.name,naturalW:nw,naturalH:nh,w:(nw/sheetDPI).toFixed(3),h:(nh/sheetDPI).toFixed(3),lockSide:"width",copies:1,ready:true,error:null,trimmed});
       };
+      img.onerror=()=>resolve({id:uid(),file,src:url,name:file.name,naturalW:0,naturalH:0,w:"1",h:"1",lockSide:"width",copies:1,ready:false,error:"Failed to load"});
       img.src=url;
-    });
+    })));
+    setBatchFiles(items.filter(it=>!it.error));
+  };
+  const onFile=e=>{
+    const files=[...e.target.files]; e.target.value="";
+    if(!files.length) return;
+    if(files.length===1){loadImageFile(files[0]);return;}
+    loadBatchFiles(files);
   };
   // Drag-and-drop files onto canvas
   const onDragDropFile=e=>{
@@ -1345,7 +1404,7 @@ export default function GangSheetBuilder() {
       };
       img.src=url;
     }
-    else if(files.length>1){files.forEach(f=>{const fakeEvt={target:{files:[f],value:""}};onFile(fakeEvt);});}
+    else if(files.length>1){loadBatchFiles(files);}
   };
   // Clipboard paste
   const onPaste=useCallback(e=>{
@@ -1400,67 +1459,161 @@ export default function GangSheetBuilder() {
   });
   const [nestingInProgress,setNestingInProgress]=useState(false);
   const [nestingProgress,setNestingProgress]=useState("");
+  const [batchFiles,setBatchFiles]=useState(null);
+  const [batchPlacing,setBatchPlacing]=useState(false);
+  const [batchProgress,setBatchProgress]=useState("");
   const autoPlace=async()=>{
     if(!uploadedImg||!placeW||!placeH) return;
-    const w=parseFloat(placeW),h=parseFloat(placeH),co=cutEnabled?(cutOffset||0):0,dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.08:0,g=parseFloat(gap)||0,n=parseInt(copies)||1,rawM=parseFloat(margin)||0,m=rawM;
-    let packed;
     const img=cachedImg(uploadedImg.src);
-    if(autoRotatePlace&&img.complete&&img.naturalWidth){
-      // Content-aware nesting with loading dialog
-      setNestingInProgress(true); setNestingProgress("Preparing masks…");
-      await new Promise(r=>setTimeout(r,0)); // let React render loading state
-      const nested=await nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,placements,true,(done,total)=>{
-        setNestingProgress(`Placing ${done+1} of ${total}...`);
-      },!autoDistribute);
-      packed=nested.map(p=>({...p,rotated:p.rotation!==0}));
-      setNestingInProgress(false);
-    } else {
-      // Standard rectangular packing — if auto-distribute is off, allow overflow below canvas
-      const gFull=g+(co+dieCutExtra)*2;
-      const overflowSH=autoDistribute?sheetH:sheetH+n*(h+gFull);
-      packed=packItems(inflateByCut(placements),w,h,gFull,sheetW,overflowSH,n,m).map(p=>({...p,rotated:false}));
-    }
-    let warn="";
-    if(!packed.length){
-      // Last resort fallback
-      const gFull=g+(co+dieCutExtra)*2;
-      const maxBottom=placements.length?Math.max(...placements.map(p=>p.y+p.h)):0;
-      packed=packItems(inflateByCut(placements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
-      if(!packed.length){updActive({warning:"Cannot place."});return;}
-    }
-    // Check if any items spilled below canvas
-    const belowCanvas=packed.some(p=>p.y+p.h>sheetH);
-    if(belowCanvas&&!autoDistribute) warn="⚠ Placed below canvas — increase sheet height to print";
-    // Auto-distribute: spill overflow onto new sheets
-    if(packed.length<n&&autoDistribute&&!warn){
-      const remaining=n-packed.length;
-      const newSheets=[];
-      let left=remaining;
-      while(left>0){
-        const ns=makeSheet({label:uniqueLabel(`${active.label} (overflow ${newSheets.length+2})`),sheetW,sheetH,sheetDPI,margin:m,gap:g,uploadedImg:active.uploadedImg,placeW:active.placeW,placeH:active.placeH});
-        const sp=packItems([],w,h,g,sheetW,sheetH,left,m);
-        if(!sp.length) break;
-        const gid=uid(),col=nextColor(),sn=uploadedImg.name.replace(/\.[^.]+$/,"");
-        ns.groups=[{id:gid,name:sn,color:col,src:uploadedImg.src,w,h,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation,flipH,flipV}];
-        const cp=cutEnabled?{cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius}:{};
-        ns.placements=sp.map(p=>({id:uid(),groupId:gid,color:col,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:p.w,h:p.h,rotation,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cp}));
-        newSheets.push(ns);
-        left-=sp.length;
-      }
-      if(newSheets.length){
-        warn=`Distributed across ${newSheets.length+1} sheets`;
-        setSheets(prev=>[...prev,...newSheets]);
-      } else if(packed.length<n){
-        warn=`Only ${packed.length} of ${n} fit.`;
-      }
-    } else if(packed.length<n&&!warn) warn=`Only ${packed.length} of ${n} fit.`;
-    const{warn:rW,caution,effDpi}=nativeRes(uploadedImg.naturalW,uploadedImg.naturalH,w,h,sheetDPI);
-    if(rW) warn=`⚠ ${Math.round(effDpi)}dpi — may blur (target ${sheetDPI})`;
-    else if(caution) warn=`⚠ ${Math.round(effDpi)}dpi at this size`;
-    const color=nextColor(),groupId=uid(),shortName=uploadedImg.name.replace(/\.[^.]+$/,"");
+    const g=parseFloat(gap)||0,rawM=parseFloat(margin)||0,m=rawM;
     const cutProps=cutEnabled?{cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius}:{};
-    updActive(s=>({warning:warn,groups:[...s.groups,{id:groupId,name:shortName,color,src:uploadedImg.src,w,h,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation,flipH,flipV}],placements:[...s.placements,...packed.map(p=>{const rot=p.rotation!==undefined?(rotation+p.rotation)%360:p.rotated?(rotation+90)%360:rotation;const isRot=rot%180!==rotation%180;const pw=isRot?h:w,ph=isRot?w:h;return{id:uid(),groupId,color,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:pw,h:ph,rotation:rot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cutProps};})]}));
+    const co=cutEnabled?(cutOffset||0):0;
+    const shortName=uploadedImg.name.replace(/\.[^.]+$/,"");
+
+    // Build list of size jobs: base size + extra sizes
+    const sizeJobs=[{w:parseFloat(placeW),h:parseFloat(placeH),copies:parseInt(copies)||1},...extraSizes.map(sz=>({w:parseFloat(sz.w)||1,h:parseFloat(sz.h)||1,copies:parseInt(sz.copies)||1}))];
+    // Sort largest first for better packing
+    sizeJobs.sort((a,b)=>(b.w*b.h*b.copies)-(a.w*a.h*a.copies));
+    const totalJobs=sizeJobs.reduce((s,j)=>s+j.copies,0);
+
+    setNestingInProgress(true);
+    setNestingProgress(sizeJobs.length>1?`Preparing ${sizeJobs.length} sizes…`:"Preparing masks…");
+    await new Promise(r=>setTimeout(r,0));
+
+    let accPlacements=[...placements]; // accumulated placements for sequential packing
+    const allNewGroups=[], allNewPlacements=[];
+    let warn="", placedTotal=0;
+
+    for(let si=0;si<sizeJobs.length;si++){
+      const job=sizeJobs[si];
+      const w=job.w, h=job.h, n=job.copies;
+      const dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.08:0;
+      let packed;
+
+      if(sizeJobs.length>1) setNestingProgress(`Size ${si+1}/${sizeJobs.length} (${w}"×${h}"): preparing…`);
+
+      if(autoRotatePlace&&img.complete&&img.naturalWidth){
+        const nested=await nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,accPlacements,true,(done,total)=>{
+          setNestingProgress(sizeJobs.length>1?`Size ${si+1}/${sizeJobs.length}: placing ${done+1}/${total}`:`Placing ${done+1} of ${total}...`);
+        },!autoDistribute);
+        packed=nested.map(p=>({...p,rotated:p.rotation!==0}));
+      } else {
+        const gFull=g+(co+dieCutExtra)*2;
+        const overflowSH=autoDistribute?sheetH:sheetH+n*(h+gFull);
+        packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,overflowSH,n,m).map(p=>({...p,rotated:false}));
+      }
+
+      if(!packed.length){
+        const gFull=g+(co+dieCutExtra)*2;
+        const maxBottom=accPlacements.length?Math.max(...accPlacements.map(p=>p.y+p.h)):0;
+        packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
+      }
+
+      if(packed.length<n&&!warn) warn=`Some items didn't fit.`;
+      const belowCanvas=packed.some(p=>p.y+p.h>sheetH);
+      if(belowCanvas&&!autoDistribute&&!warn) warn="⚠ Placed below canvas — increase sheet height to print";
+
+      const color=nextColor(),groupId=uid();
+      const group={id:groupId,name:sizeJobs.length>1?`${shortName} (${w}"×${h}")`:shortName,color,src:uploadedImg.src,w,h,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation,flipH,flipV};
+      allNewGroups.push(group);
+
+      const newPls=packed.map(p=>{
+        const rot=p.rotation!==undefined?(rotation+p.rotation)%360:p.rotated?(rotation+90)%360:rotation;
+        const isSwap=rot===90||rot===270;
+        const pw=isSwap?h:w,ph=isSwap?w:h;
+        return{id:uid(),groupId,color,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:pw,h:ph,rotation:rot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cutProps};
+      });
+      allNewPlacements.push(...newPls);
+      accPlacements=[...accPlacements,...newPls]; // so next size packs around these
+      placedTotal+=packed.length;
+    }
+
+    setNestingInProgress(false);
+
+    // DPI warning for base size
+    const bw=parseFloat(placeW),bh=parseFloat(placeH);
+    const{warn:rW,caution,effDpi}=nativeRes(uploadedImg.naturalW,uploadedImg.naturalH,bw,bh,sheetDPI);
+    if(rW&&!warn) warn=`⚠ ${Math.round(effDpi)}dpi — may blur (target ${sheetDPI})`;
+    else if(caution&&!warn) warn=`⚠ ${Math.round(effDpi)}dpi at this size`;
+
+    updActive(s=>({warning:warn,extraSizes:[],groups:[...s.groups,...allNewGroups],placements:[...s.placements,...allNewPlacements]}));
     if(isMobile) setDrawer(null);
+  };
+
+  // Batch place: place all images from batch modal
+  const batchPlace=async()=>{
+    if(!batchFiles||!batchFiles.length) return;
+    const g=parseFloat(gap)||0,m=parseFloat(margin)||0;
+    const co=cutEnabled?(cutOffset||0):0;
+    const cutProps=cutEnabled?{cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius}:{};
+
+    // Flatten all images × sizes into jobs, sort largest first
+    const jobs=[];
+    batchFiles.forEach(bf=>{
+      const sizes=bf.sizes||[{id:"base",w:bf.w,h:bf.h,copies:bf.copies||1}];
+      sizes.forEach(sz=>{
+        const w=parseFloat(sz.w)||1,h=parseFloat(sz.h)||1,n=parseInt(sz.copies)||1;
+        jobs.push({src:bf.src,name:bf.name,naturalW:bf.naturalW,naturalH:bf.naturalH,w,h,copies:n});
+      });
+    });
+    jobs.sort((a,b)=>(b.w*b.h*b.copies)-(a.w*a.h*a.copies));
+
+    const totalItems=jobs.reduce((s,j)=>s+j.copies,0);
+    setBatchPlacing(true);setBatchProgress(`Preparing ${jobs.length} designs…`);
+    await new Promise(r=>setTimeout(r,0));
+
+    let accPlacements=[...placements];
+    const allGroups=[],allPlacements=[];
+    let warn="",jobsDone=0;
+
+    for(let ji=0;ji<jobs.length;ji++){
+      const job=jobs[ji];
+      const w=job.w,h=job.h,n=job.copies;
+      const dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.08:0;
+      const img=cachedImg(job.src);
+      let packed;
+
+      setBatchProgress(`Design ${ji+1}/${jobs.length}: ${job.name} (${w}"×${h}")…`);
+      await new Promise(r=>setTimeout(r,0));
+
+      if(autoRotatePlace&&img&&img.complete&&img.naturalWidth){
+        packed=await nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,accPlacements,true,(done,total)=>{
+          setBatchProgress(`Design ${ji+1}/${jobs.length}: placing ${done+1}/${total}`);
+        },!autoDistribute);
+        packed=packed.map(p=>({...p,rotated:p.rotation!==0}));
+      } else {
+        const gFull=g+(co+dieCutExtra)*2;
+        const overflowSH=autoDistribute?sheetH:sheetH+n*(h+gFull);
+        packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,overflowSH,n,m).map(p=>({...p,rotated:false}));
+      }
+
+      if(!packed.length){
+        const gFull=g+(co+dieCutExtra)*2;
+        const maxBottom=accPlacements.length?Math.max(...accPlacements.map(p=>p.y+p.h)):0;
+        packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
+      }
+
+      if(packed.length<n&&!warn) warn="Some items didn't fit.";
+      const belowCanvas=packed.some(p=>p.y+p.h>sheetH);
+      if(belowCanvas&&!autoDistribute&&!warn) warn="⚠ Placed below canvas — increase sheet height to print";
+
+      const color=nextColor(),groupId=uid(),shortName=job.name.replace(/\.[^.]+$/,"");
+      allGroups.push({id:groupId,name:shortName,color,src:job.src,w,h,gap:g,naturalW:job.naturalW,naturalH:job.naturalH,notes:"",rotation:0,flipH:false,flipV:false});
+
+      const newPls=packed.map(p=>{
+        const rot=p.rotation||0;
+        const isRot=rot===90||rot===270;
+        const pw=isRot?h:w,ph=isRot?w:h;
+        return{id:uid(),groupId,color,src:job.src,name:job.name,x:p.x,y:p.y,w:pw,h:ph,rotation:rot,flipH:false,flipV:false,naturalW:job.naturalW,naturalH:job.naturalH,...cutProps};
+      });
+      allPlacements.push(...newPls);
+      accPlacements=[...accPlacements,...newPls];
+      jobsDone++;
+    }
+
+    setBatchPlacing(false);
+    updActive(s=>({warning:warn,groups:[...s.groups,...allGroups],placements:[...s.placements,...allPlacements]}));
+    setBatchFiles(null);
   };
 
   const doFillSheet=()=>{
@@ -1552,7 +1705,36 @@ export default function GangSheetBuilder() {
     const np={...p,id:uid(),x:nx,y:ny};
     updActive(s=>({placements:[...s.placements,np],warning:packed.length?"":"⚠ Duplicated outside canvas bounds"})); setSelected(np.id);
   };
-  keyActionRef.current = { deleteSelected, duplicateSelected, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25 };
+  const copySelected=()=>{
+    const ka=keyActionRef.current||{};
+    const sel=ka.selected, ms=ka.multiSelected||[], pls=ka.placements||[], grps=ka.groups||[];
+    const ids=ms.length>0?[...ms,sel].filter(Boolean):[sel].filter(Boolean);
+    if(!ids.length) return;
+    const idSet=new Set(ids);
+    const copiedPls=pls.filter(p=>idSet.has(p.id)).map(p=>({...p}));
+    const groupIds=new Set(copiedPls.map(p=>p.groupId));
+    const copiedGrps=grps.filter(g=>groupIds.has(g.id)).map(g=>({...g}));
+    clipboardRef.current={placements:copiedPls,groups:copiedGrps,pasteCount:0};
+  };
+  const pasteFromClipboard=()=>{
+    const cb=clipboardRef.current;
+    if(!cb||!cb.placements.length) return;
+    cb.pasteCount=(cb.pasteCount||0)+1;
+    const offset=0.25*cb.pasteCount;
+    const gidMap={};
+    const newGroups=cb.groups.map(g=>{const nid=uid();gidMap[g.id]=nid;return{...g,id:nid};});
+    const newPls=cb.placements.map(p=>({...p,id:uid(),groupId:gidMap[p.groupId]||p.groupId,x:p.x+offset,y:p.y+offset}));
+    newPls.forEach(p=>cachedImg(p.src));
+    // Use functional update to read current groups from state (not stale closure)
+    updActive(s=>{
+      const existingGroupIds=new Set(s.groups.map(g=>g.id));
+      const groupsToAdd=newGroups.filter(g=>!existingGroupIds.has(g.id));
+      return{groups:[...s.groups,...groupsToAdd],placements:[...s.placements,...newPls]};
+    });
+    if(newPls.length===1){setSelected(newPls[0].id);setMultiSelected([]);}
+    else if(newPls.length>1){setSelected(newPls[0].id);setMultiSelected(newPls.slice(1).map(p=>p.id));}
+  };
+  keyActionRef.current = { deleteSelected, duplicateSelected, copySelected, pasteFromClipboard, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25 };
   const rotateSelected  =deg=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>{if(p.id!==selected)return p;const oldRot=(p.rotation||0),newRot=((oldRot+deg+360)%360);const oldIs90=oldRot===90||oldRot===270,newIs90=newRot===90||newRot===270;const swap=oldIs90!==newIs90;return{...p,rotation:newRot,...(swap?{w:p.h,h:p.w,x:p.x+(p.w-p.h)/2,y:p.y+(p.h-p.w)/2}:{})};})}));};
   const flipSelected    =axis=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:axis==="h"?{...p,flipH:!p.flipH}:{...p,flipV:!p.flipV})}));};
   // Trim transparent pixels from a placement (smart-object-like)
@@ -2089,6 +2271,7 @@ export default function GangSheetBuilder() {
     const{x,y}=toIn(e.clientX,e.clientY);
     const p=hitTest(x,y);
     if(p){setSelected(p.id);setCtxMenu({x:e.clientX,y:e.clientY});}
+    else if(clipboardRef.current&&clipboardRef.current.placements.length){setCtxMenu({x:e.clientX,y:e.clientY,canvasOnly:true});}
   };
 
   // ── Touch events (mobile) ──
@@ -2595,7 +2778,7 @@ export default function GangSheetBuilder() {
           <div style={{fontSize:10,color:C.muted}}>PNG · JPG · WebP</div>
         </>)}
       </div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+      <div data-autotrim={autoTrimImport?'true':'false'} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
         <span style={{fontSize:10,color:C.muted}}>Auto-trim on import</span>
         <Toggle on={autoTrimImport} onClick={()=>updActive({autoTrimImport:!autoTrimImport})}/>
       </div>
@@ -2659,8 +2842,27 @@ export default function GangSheetBuilder() {
         <span style={{fontSize:10,color:C.muted}}>Auto-distribute across sheets</span>
         <Toggle on={autoDistribute} onClick={()=>updActive({autoDistribute:!autoDistribute})}/>
       </div>
+      {/* Extra size variants */}
+      {extraSizes.length>0&&<div style={{marginBottom:6}}>
+        <div style={S.label}>Additional Sizes</div>
+        {extraSizes.map((sz,i)=>{
+          const ar=uploadedImg&&uploadedImg.naturalH>0?uploadedImg.naturalW/uploadedImg.naturalH:1;
+          const updSz=(patch)=>updActive(s=>({extraSizes:s.extraSizes.map(s2=>s2.id===sz.id?{...s2,...patch}:s2)}));
+          return <div key={sz.id} style={{display:"flex",gap:4,alignItems:"center",marginBottom:4}}>
+            <span style={{fontSize:9,color:C.muted,minWidth:14}}>#{i+2}</span>
+            <input style={{...S.input,flex:1}} type="number" min="0.01" step="0.1" value={sz.w||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSz({w:v});return;}updSz(lockSide==="width"?{w:v,h:(pv/ar).toFixed(3)}:{w:v});}}/>
+            <span style={{fontSize:9,color:C.muted}}>×</span>
+            <input style={{...S.input,flex:1}} type="number" min="0.01" step="0.1" value={sz.h||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSz({h:v});return;}updSz(lockSide==="height"?{h:v,w:(pv*ar).toFixed(3)}:{h:v});}}/>
+            <input style={{...S.input,width:36}} type="number" min="1" max="999" value={sz.copies||1} onChange={e=>updSz({copies:parseInt(e.target.value)||1})}/>
+            <button style={{...S.btn("ghost"),padding:"2px 5px",fontSize:9}} onClick={()=>updActive(s=>({extraSizes:s.extraSizes.filter(s2=>s2.id!==sz.id)}))}>✕</button>
+          </div>;
+        })}
+      </div>}
+      <button style={{...S.btn("ghost"),width:"100%",marginBottom:6,fontSize:9,padding:"5px 0"}} onClick={()=>updActive(s=>({extraSizes:[...s.extraSizes,{id:uid(),w:placeW||"3",h:placeH||"3",copies:1}]}))} disabled={!uploadedImg}>
+        + Add Size Variant
+      </button>
       <button style={{...S.btn("primary"),width:"100%",padding:isMobile?"14px":"9px",fontSize:isMobile?14:11}} onClick={autoPlace} disabled={!uploadedImg||!placeW||!placeH}>
-        Auto-Place {copies} {copies===1?"Copy":"Copies"}
+        {extraSizes.length>0?`Auto-Place All Sizes (${1+extraSizes.length})`:`Auto-Place ${copies} ${copies===1?"Copy":"Copies"}`}
       </button>
       {selectedItem&&!isMobile&&(
         <div style={S.divider}>
@@ -2989,6 +3191,99 @@ export default function GangSheetBuilder() {
           <div style={{fontSize:12,color:C.accent,marginTop:8}}>{nestingProgress||"Calculating placement…"}</div>
         </div>
       )}
+      {batchPlacing&&(
+        <div style={S.overlay}>
+          <div style={S.spinner}/>
+          <div style={{fontSize:12,color:C.accent,marginTop:8}}>{batchProgress||"Processing batch…"}</div>
+        </div>
+      )}
+      {batchFiles&&!batchPlacing&&(
+        <div style={S.modal} onClick={()=>setBatchFiles(null)}>
+          <div style={{...S.modalBox,width:isMobile?"96vw":620,maxHeight:"86vh"}} onClick={e=>e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <span style={{fontWeight:800,fontSize:11,letterSpacing:"0.08em",color:C.accent}}>BATCH UPLOAD</span>
+              <button style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:0}} onClick={()=>setBatchFiles(null)}>✕</button>
+            </div>
+            <div style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+              <div style={{display:"flex",alignItems:"center",gap:5}}>
+                <span style={{fontSize:9,color:C.muted}}>Auto-rotate</span>
+                <Toggle on={autoRotatePlace} onClick={()=>updActive({autoRotatePlace:!autoRotatePlace})}/>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:5}}>
+                <span style={{fontSize:9,color:C.muted}}>Auto-distribute</span>
+                <Toggle on={autoDistribute} onClick={()=>updActive({autoDistribute:!autoDistribute})}/>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:5}}>
+                <span style={{fontSize:9,color:C.muted}}>Gap</span>
+                <input style={{...S.input,width:50,fontSize:10}} type="number" min="0" step="0.05" value={gap} onChange={e=>updActive({gap:parseFloat(e.target.value)||0})}/>
+              </div>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"8px 14px"}}>
+              {batchFiles.map((bf,i)=>{
+                const ar=bf.naturalH>0?bf.naturalW/bf.naturalH:1;
+                const sizes=bf.sizes||[{id:"base",w:bf.w||"1",h:bf.h||"1",copies:bf.copies||1}];
+                const updBf=(patch)=>setBatchFiles(prev=>prev?prev.map(b=>b.id===bf.id?{...b,...patch}:b):prev);
+                const updSize=(sizeId,patch)=>{
+                  if(sizeId==="base") updBf(patch);
+                  else setBatchFiles(prev=>prev?prev.map(b=>b.id!==bf.id?b:{...b,sizes:(b.sizes||[]).map(s=>s.id===sizeId?{...s,...patch}:s)}):prev);
+                };
+                const doTrim=()=>{
+                  if(bf.trimmed){
+                    // Revert to original
+                    const origSrc=bf.originalSrc||bf.src;
+                    const img2=cachedImg(origSrc);
+                    if(img2&&img2.naturalWidth){
+                      updBf({src:origSrc,naturalW:img2.naturalWidth,naturalH:img2.naturalHeight,w:(img2.naturalWidth/sheetDPI).toFixed(3),h:(img2.naturalHeight/sheetDPI).toFixed(3),trimmed:false});
+                    }
+                  } else {
+                    // Apply trim
+                    const img2=cachedImg(bf.src);
+                    if(img2&&img2.naturalWidth){
+                      const t=trimImage(img2);
+                      if(t){
+                        cachedImg(t.src);
+                        updBf({originalSrc:bf.originalSrc||bf.src,src:t.src,naturalW:t.naturalW,naturalH:t.naturalH,w:(t.naturalW/sheetDPI).toFixed(3),h:(t.naturalH/sheetDPI).toFixed(3),trimmed:true});
+                      }
+                    }
+                  }
+                };
+                return <div key={bf.id} style={{marginBottom:10,padding:8,background:C.selected,borderRadius:6,border:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:6}}>
+                    <img src={bf.src} style={{width:40,height:40,objectFit:"contain",borderRadius:4,border:`1px solid ${C.border}`,background:C.bg}} alt=""/>
+                    <span style={{flex:1,fontSize:10,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bf.name}</span>
+                    <div style={{display:"flex",alignItems:"center",gap:3}}>
+                      <span style={{fontSize:8,color:C.muted}}>Trim</span>
+                      <Toggle on={!!bf.trimmed} onClick={doTrim}/>
+                    </div>
+                    <button style={{...S.btn("ghost"),padding:"2px 6px",fontSize:9,color:"#ef4444"}} onClick={()=>setBatchFiles(prev=>{const n=prev.filter(b=>b.id!==bf.id);return n.length?n:null;})}>✕</button>
+                  </div>
+                  {sizes.map((sz,si)=><div key={sz.id} style={{display:"flex",gap:4,alignItems:"center",marginBottom:3}}>
+                    <span style={{fontSize:8,color:C.muted,minWidth:12}}>{si===0?"":"#"+(si+1)}</span>
+                    <input style={{...S.input,flex:1,fontSize:10}} type="number" min="0.01" step="0.1" value={sz.w||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSize(sz.id,{w:v});return;}updSize(sz.id,ar>0?{w:v,h:(pv/ar).toFixed(3)}:{w:v});}}/>
+                    <span style={{fontSize:8,color:C.muted}}>×</span>
+                    <input style={{...S.input,flex:1,fontSize:10}} type="number" min="0.01" step="0.1" value={sz.h||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSize(sz.id,{h:v});return;}updSize(sz.id,ar>0?{h:v,w:(pv*ar).toFixed(3)}:{h:v});}}/>
+                    <span style={{fontSize:8,color:C.muted}}>qty</span>
+                    <input style={{...S.input,width:36,fontSize:10}} type="number" min="1" max="999" value={sz.copies||1} onChange={e=>updSize(sz.id,{copies:parseInt(e.target.value)||1})}/>
+                    {si>0&&<button style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:10,padding:"0 2px"}} onClick={()=>setBatchFiles(prev=>prev.map(b=>b.id!==bf.id?b:{...b,sizes:b.sizes.filter(s=>s.id!==sz.id)}))}>✕</button>}
+                  </div>)}
+                  <button style={{fontSize:8,color:C.accent,background:"none",border:"none",cursor:"pointer",padding:"2px 0",opacity:0.7}} onClick={()=>{
+                    const baseW=sizes[0]?.w||bf.w,baseH=sizes[0]?.h||bf.h;
+                    const newSize={id:uid(),w:baseW,h:baseH,copies:1};
+                    if(bf.sizes) updBf({sizes:[...bf.sizes,newSize]});
+                    else updBf({sizes:[{id:"base",w:bf.w,h:bf.h,copies:bf.copies||1},newSize]});
+                  }}>+ Add Size</button>
+                </div>;
+              })}
+            </div>
+            <div style={{padding:"10px 14px",borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <button style={{...S.btn("ghost"),fontSize:10}} onClick={()=>{const inp=document.createElement("input");inp.type="file";inp.accept="image/*";inp.multiple=true;inp.onchange=async(e)=>{const files=[...e.target.files];if(!files.length)return;const items=await Promise.all(files.map(file=>new Promise(resolve=>{const url=URL.createObjectURL(file);const img=new Image();img.onload=()=>{cachedImg(url);let src=url,nw=img.naturalWidth,nh=img.naturalHeight;if(autoTrimRef.current){const t=trimImage(img);if(t){src=t.src;nw=t.naturalW;nh=t.naturalH;cachedImg(src);}}resolve({id:uid(),file,src,name:file.name,naturalW:nw,naturalH:nh,w:(nw/sheetDPI).toFixed(3),h:(nh/sheetDPI).toFixed(3),lockSide:"width",copies:1,ready:true,error:null});};img.onerror=()=>resolve(null);img.src=url;})));setBatchFiles(prev=>[...prev,...items.filter(Boolean)]);};inp.click();}}>+ Add More</button>
+              <button style={{...S.btn("primary"),fontSize:11,padding:"8px 24px"}} onClick={batchPlace}>
+                Place All ({batchFiles.reduce((s,bf)=>{const sizes=bf.sizes||[{copies:bf.copies||1}];return s+sizes.reduce((ss,sz)=>ss+(parseInt(sz.copies)||1),0);},0)} items)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {exporting&&(
         <div style={S.overlay}>
           <div style={S.spinner}/>
@@ -3187,13 +3482,15 @@ export default function GangSheetBuilder() {
       </>}
 
       {/* ── Context menu (mobile long-press) ── */}
-      <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={()=>setCtxMenu({x:null,y:null})}
+      <ContextMenu x={ctxMenu.x} y={ctxMenu.y} canvasOnly={ctxMenu.canvasOnly} onClose={()=>setCtxMenu({x:null,y:null})}
         onDelete={()=>{deleteSelected();setCtxMenu({x:null,y:null});}}
         onDuplicate={()=>{duplicateSelected();setCtxMenu({x:null,y:null});}}
         onRotate={deg=>{rotateSelected(deg);setCtxMenu({x:null,y:null});}}
         onFlipH={()=>{flipSelected("h");setCtxMenu({x:null,y:null});}}
         onFlipV={()=>{flipSelected("v");setCtxMenu({x:null,y:null});}}
-        onTrim={()=>{trimSelected();setCtxMenu({x:null,y:null});}}/>
+        onTrim={()=>{trimSelected();setCtxMenu({x:null,y:null});}}
+        onCopy={()=>{copySelected();setCtxMenu({x:null,y:null});}}
+        onPaste={()=>{pasteFromClipboard();setCtxMenu({x:null,y:null});}}/>
 
       {/* Layer context menu */}
       {layerCtx&&(
