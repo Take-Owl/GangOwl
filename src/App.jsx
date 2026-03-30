@@ -1519,7 +1519,7 @@ export default function GangSheetBuilder() {
     updActive(s=>({placements:[...s.placements,np],warning:packed.length?"":"⚠ Duplicated outside canvas bounds"})); setSelected(np.id);
   };
   keyActionRef.current = { deleteSelected, duplicateSelected, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25 };
-  const rotateSelected  =deg=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,rotation:((p.rotation||0)+deg+360)%360})}));};
+  const rotateSelected  =deg=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>{if(p.id!==selected)return p;const oldRot=(p.rotation||0),newRot=((oldRot+deg+360)%360);const oldIs90=oldRot===90||oldRot===270,newIs90=newRot===90||newRot===270;const swap=oldIs90!==newIs90;return{...p,rotation:newRot,...(swap?{w:p.h,h:p.w,x:p.x+(p.w-p.h)/2,y:p.y+(p.h-p.w)/2}:{})};})}));};
   const flipSelected    =axis=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:axis==="h"?{...p,flipH:!p.flipH}:{...p,flipV:!p.flipV})}));};
   // Trim transparent pixels from a placement (smart-object-like)
   const trimSelected=()=>{
@@ -2582,7 +2582,7 @@ export default function GangSheetBuilder() {
       </div>
       <div><div style={S.label}>Transform</div>
         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-          {[0,90,180,270].map(r=><button key={r} style={{...S.lockBtn(rotation===r),flex:"unset",minHeight:touchTarget,padding:"0 10px"}} onClick={()=>{updActive({rotation:r});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,rotation:r})}));}}>{r}°</button>)}
+          {[0,90,180,270].map(r=><button key={r} style={{...S.lockBtn(rotation===r),flex:"unset",minHeight:touchTarget,padding:"0 10px"}} onClick={()=>{updActive({rotation:r});if(selected)updActive(s=>({placements:s.placements.map(p=>{if(p.id!==selected)return p;const oldRot=p.rotation||0;const oldIs90=oldRot===90||oldRot===270,newIs90=r===90||r===270;const swap=oldIs90!==newIs90;return{...p,rotation:r,...(swap?{w:p.h,h:p.w,x:p.x+(p.w-p.h)/2,y:p.y+(p.h-p.w)/2}:{})};})}));}}>{r}°</button>)}
           <button style={{...S.lockBtn(flipH),flex:"unset",minHeight:touchTarget,padding:"0 10px"}} onClick={()=>{const nv=!flipH;updActive({flipH:nv});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,flipH:nv})}));}}>↔</button>
           <button style={{...S.lockBtn(flipV),flex:"unset",minHeight:touchTarget,padding:"0 10px"}} onClick={()=>{const nv=!flipV;updActive({flipV:nv});if(selected)updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:{...p,flipV:nv})}));}}>↕</button>
         </div>
