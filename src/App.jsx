@@ -341,14 +341,19 @@ function runScanWorker(grid, gw, gh, mask, mw, mh, scanMaxY, step) {
 // Every mask tracks contentOffsetX/Y = grid pixels from mask edge to content origin.
 // Stamping: maskGridPos = contentGridPos - contentOffset - dilatePad
 // Reading:  contentInches = (maskGridPos + contentOffset) / NEST_PPI
-async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutEnabled, sW, sH, count, margin, existingPlacements, autoRotate, onProgress) {
+async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape, cutEnabled, sW, sH, count, margin, existingPlacements, autoRotate, onProgress, allowOverflow=false) {
   const halfGapPx = Math.ceil((gap / 2) * NEST_PPI);
-  const { grid, w: gw, h: gh } = createSheetGrid(sW, sH);
+  // If overflow allowed, extend grid height to fit all items (estimate: count * item height)
+  const overflowH = allowOverflow ? sH + count * (Math.max(wIn, hIn) + gap) : sH;
+  const gw = Math.ceil(sW * NEST_PPI), gh = Math.ceil(overflowH * NEST_PPI);
+  const grid = new Uint8Array(gw * gh);
 
-  // Mark margins as occupied
+  // Mark margins as occupied (skip bottom margin if overflow allowed)
   const marginPx = Math.ceil(Math.max(margin, 0.05) * NEST_PPI);
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
-    if (x < marginPx || x >= gw - marginPx || y < marginPx || y >= gh - marginPx) grid[y * gw + x] = 1;
+    const atLeft = x < marginPx, atRight = x >= gw - marginPx;
+    const atTop = y < marginPx, atBottom = !allowOverflow && y >= gh - marginPx;
+    if (atLeft || atRight || atTop || atBottom) grid[y * gw + x] = 1;
   }
 
   // Stamp existing placements onto grid
@@ -1406,23 +1411,26 @@ export default function GangSheetBuilder() {
       await new Promise(r=>setTimeout(r,0)); // let React render loading state
       const nested=await nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,placements,true,(done,total)=>{
         setNestingProgress(`Placing ${done+1} of ${total}...`);
-      });
+      },!autoDistribute);
       packed=nested.map(p=>({...p,rotated:p.rotation!==0}));
       setNestingInProgress(false);
     } else {
-      // Standard rectangular packing
+      // Standard rectangular packing — if auto-distribute is off, allow overflow below canvas
       const gFull=g+(co+dieCutExtra)*2;
-      packed=packItems(inflateByCut(placements),w,h,gFull,sheetW,sheetH,n,m).map(p=>({...p,rotated:false}));
+      const overflowSH=autoDistribute?sheetH:sheetH+n*(h+gFull);
+      packed=packItems(inflateByCut(placements),w,h,gFull,sheetW,overflowSH,n,m).map(p=>({...p,rotated:false}));
     }
     let warn="";
     if(!packed.length){
-      // Fallback: try rectangular packing below canvas
+      // Last resort fallback
       const gFull=g+(co+dieCutExtra)*2;
       const maxBottom=placements.length?Math.max(...placements.map(p=>p.y+p.h)):0;
       packed=packItems(inflateByCut(placements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
       if(!packed.length){updActive({warning:"Cannot place."});return;}
-      warn="⚠ Placed below canvas — increase sheet height to print";
     }
+    // Check if any items spilled below canvas
+    const belowCanvas=packed.some(p=>p.y+p.h>sheetH);
+    if(belowCanvas&&!autoDistribute) warn="⚠ Placed below canvas — increase sheet height to print";
     // Auto-distribute: spill overflow onto new sheets
     if(packed.length<n&&autoDistribute&&!warn){
       const remaining=n-packed.length;
