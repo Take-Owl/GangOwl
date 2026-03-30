@@ -1616,14 +1616,24 @@ export default function GangSheetBuilder() {
       // Check if placement is fully outside canvas bounds
       const fullyOut=p.x+p.w<=0||p.x>=sheetW||p.y+p.h<=0||p.y>=sheetH;
       const partialOut=!fullyOut&&(p.x<0||p.y<0||p.x+p.w>sheetW||p.y+p.h>sheetH);
-      const isRotSwap = p.rotation === 90 || p.rotation === 270;
-      const drawW = isRotSwap ? ph : pw, drawH = isRotSwap ? pw : ph;
+      // For rotated items where w/h were swapped (nesting), un-swap for drawImage
+      // Detect: if rotation is 90/270 AND p.w/p.h ratio is inverted vs natural, w/h were swapped
+      const isRot90 = p.rotation === 90 || p.rotation === 270;
+      let imgW = pw, imgH = ph;
+      if (isRot90 && imgObj.naturalWidth && imgObj.naturalHeight) {
+        const natAR = imgObj.naturalWidth / imgObj.naturalHeight;
+        const placeAR = p.w / p.h;
+        // If placement AR is inverted relative to natural AR, w/h were swapped by nesting
+        if ((natAR > 1 && placeAR < 1) || (natAR < 1 && placeAR > 1) || (Math.abs(natAR - 1/placeAR) < Math.abs(natAR - placeAR) && Math.abs(natAR - placeAR) > 0.05)) {
+          imgW = ph; imgH = pw; // un-swap for drawing
+        }
+      }
       ctx.save();ctx.translate(px+pw/2,py+ph/2);if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
       if(p.locked){ctx.globalAlpha=0.7;} // dim locked layers slightly
       if(fullyOut){
         // Fully out of bounds: show placeholder only, no image
-        ctx.fillStyle=p.color;ctx.globalAlpha=0.15;ctx.fillRect(-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;
-        ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(-drawW/2,-drawH/2,drawW,drawH);ctx.setLineDash([]);
+        ctx.fillStyle=p.color;ctx.globalAlpha=0.15;ctx.fillRect(-pw/2,-ph/2,pw,ph);ctx.globalAlpha=1;
+        ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(-pw/2,-ph/2,pw,ph);ctx.setLineDash([]);
       } else if(partialOut){
         // Partially out: clip image to canvas bounds
         ctx.save();
@@ -1631,33 +1641,33 @@ export default function GangSheetBuilder() {
         const cpx=spx(Math.max(0,p.x))-px-pw/2,cpy=spx(Math.max(0,p.y))-py-ph/2;
         const cpw=spx(Math.min(sheetW,p.x+p.w)-Math.max(0,p.x)),cph=spx(Math.min(sheetH,p.y+p.h)-Math.max(0,p.y));
         if(!p.rotation){ctx.beginPath();ctx.rect(cpx,cpy,cpw,cph);ctx.clip();}
-        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
-        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
+        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
+        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
         ctx.restore();
         // Draw dashed border on the out-of-bounds portion
-        ctx.strokeStyle=p.color;ctx.lineWidth=1;ctx.globalAlpha=0.4;ctx.setLineDash([4,3]);ctx.strokeRect(-drawW/2,-drawH/2,drawW,drawH);ctx.setLineDash([]);ctx.globalAlpha=1;
+        ctx.strokeStyle=p.color;ctx.lineWidth=1;ctx.globalAlpha=0.4;ctx.setLineDash([4,3]);ctx.strokeRect(-pw/2,-ph/2,pw,ph);ctx.setLineDash([]);ctx.globalAlpha=1;
       } else {
-        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
-        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-drawW/2,-drawH/2,drawW,drawH);ctx.globalAlpha=1;}
+        if(imgObj.complete&&imgObj.naturalWidth>0){ctx.globalAlpha=isHov&&!isSel?0.6:1;ctx.drawImage(imgObj,-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
+        else{ctx.fillStyle=p.color;ctx.globalAlpha=0.4;ctx.fillRect(-imgW/2,-imgH/2,imgW,imgH);ctx.globalAlpha=1;}
       }
       // Draw cut contour line (per-placement)
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
         if(p.cutShape==="die-cut"){
           const osPx=spx(p.cutOffset||0);
-          const key=`dc_${p.src.substring(0,40)}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}_${p.cutWidth||1}`;
+          const key=`dc_${p.src.substring(0,40)}_${imgW.toFixed(0)}_${imgH.toFixed(0)}_${osPx.toFixed(0)}_${p.cutColor}_${p.cutWidth||1}`;
           if(!dieCutCache.has(key)){
-            const r=buildDieCutCanvas(cachedImg(p.src),drawW,drawH,osPx,p.cutColor,p.cutWidth||1);
+            const r=buildDieCutCanvas(cachedImg(p.src),imgW,imgH,osPx,p.cutColor,p.cutWidth||1);
             if(r)dieCutCache.set(key,r);
             if(dieCutCache.size>100){dieCutCache.delete(dieCutCache.keys().next().value);}
           }
           const dc=dieCutCache.get(key);
           if(dc){
-            const sx=drawW/dc.cw, sy=drawH/dc.ch;
-            ctx.drawImage(dc.canvas,-dc.pad*sx-drawW/2,-dc.pad*sy-drawH/2,dc.tw*sx,dc.th*sy);
+            const sx=imgW/dc.cw, sy=imgH/dc.ch;
+            ctx.drawImage(dc.canvas,-dc.pad*sx-imgW/2,-dc.pad*sy-imgH/2,dc.tw*sx,dc.th*sy);
           }
         } else {
           const osPx=spx(p.cutOffset||0),rPx=spx(p.cutRadius||0);
-          const contour=getCutContour(p.src,p.cutShape,drawW,drawH,osPx,rPx);
+          const contour=getCutContour(p.src,p.cutShape,imgW,imgH,osPx,rPx);
           if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
         }
       }
@@ -2121,17 +2131,15 @@ export default function GangSheetBuilder() {
       ctx.translate(px2-tileX+pw2/2,py2-tileY+ph2/2);
       if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);
       if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
-      const isRotExport = p.rotation === 90 || p.rotation === 270;
-      const edw = isRotExport ? ph2 : pw2, edh = isRotExport ? pw2 : ph2;
-      ctx.drawImage(img,-edw/2,-edh/2,edw,edh);
+      ctx.drawImage(img,-pw2/2,-ph2/2,pw2,ph2);
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
         if(p.cutShape==="die-cut"){
           const osPx=ipx(p.cutOffset||0,dpi);
-          const dc=buildDieCutCanvas(img,edw,edh,osPx,p.cutColor,p.cutWidth||1);
-          if(dc){const sx=edw/dc.cw,sy=edh/dc.ch;ctx.drawImage(dc.canvas,-dc.pad*sx-edw/2,-dc.pad*sy-edh/2,dc.tw*sx,dc.th*sy);}
+          const dc=buildDieCutCanvas(img,pw2,ph2,osPx,p.cutColor,p.cutWidth||1);
+          if(dc){const sx=pw2/dc.cw,sy=ph2/dc.ch;ctx.drawImage(dc.canvas,-dc.pad*sx-pw2/2,-dc.pad*sy-ph2/2,dc.tw*sx,dc.th*sy);}
         } else {
           const osPx=ipx(p.cutOffset||0,dpi),rPx=ipx(p.cutRadius||0,dpi);
-          const contour=getCutContour(p.src,p.cutShape,edw,edh,osPx,rPx);
+          const contour=getCutContour(p.src,p.cutShape,pw2,ph2,osPx,rPx);
           if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
         }
       }
