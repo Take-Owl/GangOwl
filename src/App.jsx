@@ -3027,7 +3027,7 @@ export default function GangSheetBuilder() {
             <input style={{...S.input,flex:1}} type="number" min="0.01" step="0.1" value={sz.w||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSz({w:v});return;}updSz(lockSide==="width"?{w:v,h:(pv/ar).toFixed(3)}:{w:v});}}/>
             <span style={{fontSize:9,color:C.muted}}>×</span>
             <input style={{...S.input,flex:1}} type="number" min="0.01" step="0.1" value={sz.h||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSz({h:v});return;}updSz(lockSide==="height"?{h:v,w:(pv*ar).toFixed(3)}:{h:v});}}/>
-            <input style={{...S.input,width:36}} type="number" min="1" max="999" value={sz.copies||1} onChange={e=>updSz({copies:parseInt(e.target.value)||1})}/>
+            <input style={{...S.input,width:48}} type="number" min="1" max="999" value={sz.copies||1} onChange={e=>updSz({copies:parseInt(e.target.value)||1})}/>
             <button style={{...S.btn("ghost"),padding:"2px 5px",fontSize:9}} onClick={()=>updActive(s=>({extraSizes:s.extraSizes.filter(s2=>s2.id!==sz.id)}))}>✕</button>
           </div>;
         })}
@@ -3403,7 +3403,11 @@ export default function GangSheetBuilder() {
                 const sizes=bf.sizes||[{id:"base",w:bf.w||"1",h:bf.h||"1",copies:bf.copies||1}];
                 const updBf=(patch)=>setBatchFiles(prev=>prev?prev.map(b=>b.id===bf.id?{...b,...patch}:b):prev);
                 const updSize=(sizeId,patch)=>{
-                  if(sizeId==="base") updBf(patch);
+                  if(sizeId==="base"){
+                    // Update both the batch file and the base size entry if sizes array exists
+                    if(bf.sizes) setBatchFiles(prev=>prev?prev.map(b=>b.id!==bf.id?b:{...b,...patch,sizes:b.sizes.map((s,i)=>i===0?{...s,...patch}:s)}):prev);
+                    else updBf(patch);
+                  }
                   else setBatchFiles(prev=>prev?prev.map(b=>b.id!==bf.id?b:{...b,sizes:(b.sizes||[]).map(s=>s.id===sizeId?{...s,...patch}:s)}):prev);
                 };
                 const doTrim=()=>{
@@ -3438,9 +3442,9 @@ export default function GangSheetBuilder() {
                   </div>
                   {sizes.map((sz,si)=><div key={sz.id} style={{display:"flex",gap:4,alignItems:"center",marginBottom:3}}>
                     <span style={{fontSize:8,color:C.muted,minWidth:12}}>{si===0?"":"#"+(si+1)}</span>
-                    <input style={{...S.input,flex:1,fontSize:10}} type="number" min="0.01" step="0.1" value={sz.w||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSize(sz.id,{w:v});return;}updSize(sz.id,ar>0?{w:v,h:(pv/ar).toFixed(3)}:{w:v});}}/>
+                    <input style={{...S.input,flex:1,fontSize:10}} type="number" min="0.01" step="0.1" value={sz.w||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||!isFinite(pv)||pv<=0){updSize(sz.id,{w:v});return;}updSize(sz.id,ar>0&&isFinite(ar)?{w:v,h:(pv/ar).toFixed(3)}:{w:v});}}/>
                     <span style={{fontSize:8,color:C.muted}}>×</span>
-                    <input style={{...S.input,flex:1,fontSize:10}} type="number" min="0.01" step="0.1" value={sz.h||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSize(sz.id,{h:v});return;}updSize(sz.id,ar>0?{h:v,w:(pv*ar).toFixed(3)}:{h:v});}}/>
+                    <input style={{...S.input,flex:1,fontSize:10}} type="number" min="0.01" step="0.1" value={sz.h||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||!isFinite(pv)||pv<=0){updSize(sz.id,{h:v});return;}updSize(sz.id,ar>0&&isFinite(ar)?{h:v,w:(pv*ar).toFixed(3)}:{h:v});}}/>
                     <span style={{fontSize:8,color:C.muted}}>qty</span>
                     <input style={{...S.input,width:48,fontSize:10}} type="number" min="1" max="999" value={sz.copies||1} onChange={e=>updSize(sz.id,{copies:parseInt(e.target.value)||1})}/>
                     {si>0&&<button style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:10,padding:"0 2px"}} onClick={()=>setBatchFiles(prev=>prev.map(b=>b.id!==bf.id?b:{...b,sizes:b.sizes.filter(s=>s.id!==sz.id)}))}>✕</button>}
