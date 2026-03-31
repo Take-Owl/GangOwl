@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import AdSlot, { ExportAd } from "./AdSlot";
-import { isWeb, saveFileWithDialog, checkForUpdates } from "./edition";
+import { isWeb, isDesktop, saveFileWithDialog, pickExportFolder, saveFileToFolder, checkForUpdates } from "./edition";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SCREEN_DPI = 96;
@@ -2544,7 +2544,11 @@ export default function GangSheetBuilder() {
 
   const canvasToBlob=(canvas,mime,qual)=>new Promise(res=>canvas.toBlob(b=>res(b),mime,qual));
 
-  const downloadBlob=(blob,fname)=>saveFileWithDialog(blob,fname);
+  const exportFolderRef=useRef(null);
+  const downloadBlob=(blob,fname)=>{
+    if(exportFolderRef.current) return saveFileToFolder(blob,exportFolderRef.current,fname);
+    return saveFileWithDialog(blob,fname);
+  };
 
   // ── Manual PNG encoder for large images (bypasses canvas size limits) ──
   const crc32Table=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c;}return t;})();
@@ -2745,12 +2749,20 @@ export default function GangSheetBuilder() {
   const cancelExport=()=>{exportCancelRef.current=true;};
   const doExport=async(all=false)=>{
     exportCancelRef.current=false;
+    exportFolderRef.current=null;
     setShowExportDialog(false);setExporting(true);setExportAllMode(all);setExportPct(0);
     await new Promise(r=>setTimeout(r,50));
     try{
       if(all){
         const valid=sheets.filter(s=>s.placements.length>0);
+        // On desktop with multiple sheets, pick a folder once instead of per-file dialogs
+        if(isDesktop&&valid.length>1){
+          const folder=await pickExportFolder();
+          if(!folder){setExporting(false);return;}
+          exportFolderRef.current=folder;
+        }
         for(let si=0;si<valid.length;si++){await exportSheet(valid[si],si,valid.length);await new Promise(r=>setTimeout(r,400));}
+        exportFolderRef.current=null;
       }else{
         await exportSheet(active);
       }

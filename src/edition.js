@@ -117,8 +117,8 @@ export async function saveFileWithDialog(blob, defaultName) {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       await writeFile(path, bytes);
       return true;
-    } catch {
-      // Tauri plugins not available — fall back to web download
+    } catch (err) {
+      console.warn("Tauri save failed, falling back to web download:", err);
     }
   }
   // Web fallback
@@ -135,4 +135,30 @@ export async function saveFileWithDialog(blob, defaultName) {
   }
   setTimeout(() => URL.revokeObjectURL(url), 5000);
   return true;
+}
+
+// ── Desktop batch save: pick folder once, write all files into it ──
+export async function pickExportFolder() {
+  if (!isDesktop) return null;
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const folder = await open({ directory: true, title: "Choose export folder" });
+    return folder || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveFileToFolder(blob, folder, fileName) {
+  try {
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+    const sep = folder.includes("\\") ? "\\" : "/";
+    const path = folder + sep + fileName;
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    await writeFile(path, bytes);
+    return true;
+  } catch (err) {
+    console.warn("Tauri folder save failed:", err);
+    return false;
+  }
 }
