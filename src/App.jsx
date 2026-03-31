@@ -2497,9 +2497,10 @@ export default function GangSheetBuilder() {
       const p=placements[i];
       if(cache.has(p.src)) continue;
       await new Promise(res=>{
-        const img=new Image();img.crossOrigin="anonymous";
+        const img=new Image();
+        if(p.src.startsWith("http"))img.crossOrigin="anonymous";
         img.onload=()=>{cache.set(p.src,img);res();};
-        img.onerror=()=>{cache.set(p.src,null);res();};
+        img.onerror=()=>{console.warn("Export: failed to load image",p.src.slice(0,60));cache.set(p.src,null);res();};
         img.src=p.src;
       });
       if(i%5===4) await new Promise(r=>setTimeout(r,0));
