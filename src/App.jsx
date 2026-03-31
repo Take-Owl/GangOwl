@@ -2800,9 +2800,11 @@ export default function GangSheetBuilder() {
       doExport(all);
     }
   };
+  const doExportRef=useRef(doExport);
+  doExportRef.current=doExport;
   const onExportAdDone=useCallback(()=>{
     setShowExportAd(false);
-    doExport(pendingExportRef.current||false);
+    doExportRef.current(pendingExportRef.current||false);
   },[]);
 
   // ── CSV ──
