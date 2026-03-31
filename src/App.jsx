@@ -2512,6 +2512,9 @@ export default function GangSheetBuilder() {
       });
       if(i%5===4) await new Promise(r=>setTimeout(r,0));
     }
+    const loaded=[...cache.values()].filter(v=>v&&v.complete&&v.naturalWidth>0).length;
+    const failed=[...cache.values()].filter(v=>!v||!v.complete||!v.naturalWidth).length;
+    console.log("preloadImages:",{total:cache.size,loaded,failed,srcs:[...cache.keys()].map(s=>s.slice(0,40))});
     return cache;
   };
 
@@ -2519,16 +2522,18 @@ export default function GangSheetBuilder() {
   const drawTile=(cache,placements,dpi,tileX,tileY,tileW,tileH,bg,mirror=false,cutOpts=null)=>{
     const c=document.createElement("canvas");c.width=tileW;c.height=tileH;
     const ctx=c.getContext("2d");
-    if(!ctx) return null;
+    if(!ctx){console.error("drawTile: failed to get 2d context",{tileW,tileH});return null;}
     if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,tileW,tileH);}
     if(mirror){ctx.translate(tileW,0);ctx.scale(-1,1);}
+    let drawn=0,skippedNoImg=0,skippedBounds=0,skippedHidden=0;
     for(let pi=placements.length-1;pi>=0;pi--){
       const p=placements[pi];
-      if(p.visible===false) continue;
-      const img=cache.get(p.src);if(!img) continue;
+      if(p.visible===false){skippedHidden++;continue;}
+      const img=cache.get(p.src);if(!img){skippedNoImg++;continue;}
       const px2=ipx(p.x,dpi),py2=ipx(p.y,dpi),pw2=ipx(p.w,dpi),ph2=ipx(p.h,dpi);
       const right=px2+pw2,bottom=py2+ph2;
-      if(right<tileX||px2>tileX+tileW||bottom<tileY||py2>tileY+tileH) continue;
+      if(right<tileX||px2>tileX+tileW||bottom<tileY||py2>tileY+tileH){skippedBounds++;continue;}
+      drawn++;
       ctx.save();
       ctx.translate(px2-tileX+pw2/2,py2-tileY+ph2/2);
       if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);
@@ -2547,6 +2552,7 @@ export default function GangSheetBuilder() {
       }
       ctx.restore();
     }
+    console.log("drawTile:",{tileX,tileY,tileW,tileH,total:placements.length,drawn,skippedNoImg,skippedBounds,skippedHidden,cacheSize:cache.size});
     return c;
   };
 
