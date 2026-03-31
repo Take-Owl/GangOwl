@@ -2724,7 +2724,8 @@ export default function GangSheetBuilder() {
     const quality=exportFormat==="png"?undefined:isPdf?0.92:exportQuality;
     const ext=isPdf?"pdf":exportFormat==="jpeg"?"jpg":exportFormat;
     const bg=exportFormat==="jpeg"||isPdf?"#ffffff":null;
-    const baseName=totalSheets>1?`${sheetIdx+1}of${totalSheets}-${sheet.label.replace(/\s+/g,"-")}-${sheet.sheetW}x${sheet.sheetH}-${sheet.sheetDPI}dpi`:`${sheet.label.replace(/\s+/g,"-")}-${sheet.sheetW}x${sheet.sheetH}-${sheet.sheetDPI}dpi`;
+    const ts=new Date();const stamp=`${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,"0")}${String(ts.getDate()).padStart(2,"0")}-${String(ts.getHours()).padStart(2,"0")}${String(ts.getMinutes()).padStart(2,"0")}${String(ts.getSeconds()).padStart(2,"0")}`;
+    const baseName=totalSheets>1?`${sheetIdx+1}of${totalSheets}-${sheet.label.replace(/\s+/g,"-")}-${sheet.sheetW}x${sheet.sheetH}-${sheet.sheetDPI}dpi-${stamp}`:`${sheet.label.replace(/\s+/g,"-")}-${sheet.sheetW}x${sheet.sheetH}-${sheet.sheetDPI}dpi-${stamp}`;
     const pctFn=(pct)=>totalSheets>1?Math.round(((sheetIdx+pct/100)/totalSheets)*100):pct;
 
     // Phase 1: preload images
