@@ -301,7 +301,7 @@ self.onmessage = function(e) {
       if (isBorder) borderPixels.push([x, y]);
     }
   }
-  const maxBorderSamples = Math.min(borderPixels.length, 80);
+  const maxBorderSamples = Math.min(borderPixels.length, 120);
 
   // Neighbor density: count how many grid cells adjacent to the mask border are occupied
   function neighborDensity(gx, gy) {
@@ -348,14 +348,14 @@ self.onmessage = function(e) {
         // Score: lower is better
         // Primary: bottom edge (pack upward)
         // Bonus: subtract density * weight (filling gaps is rewarded)
-        const densityBonus = density * mh * 500;
-        const score = bottomEdge * 1000000 + gy * 1000 + gx - densityBonus;
+        const densityBonus = density * mh;
+        const score = (bottomEdge - densityBonus) * 10000 + gx;
         if (score < bestScore) { bestScore = score; bestX = gx; bestY = gy; }
         candidateCount++;
-        if (candidateCount >= 200) break;
+        if (candidateCount >= 500) break;
       }
     }
-    if (firstValidY >= 0 && gy > firstValidY + mh * 2) break;
+    if (firstValidY >= 0 && gy > firstValidY + mh * 4) break;
   }
   self.postMessage({ bestX, bestY, bestScore });
 };`;
@@ -365,17 +365,36 @@ function getNestWorkerURL() {
   return nestWorkerBlob;
 }
 
+// Worker pool — reuse workers instead of create+terminate per scan
+const workerPool = [];
+const POOL_SIZE = 4;
+function getPoolWorker() {
+  if (workerPool.length < POOL_SIZE) {
+    const w = new Worker(getNestWorkerURL());
+    w._busy = false;
+    workerPool.push(w);
+  }
+  const idle = workerPool.find(w => !w._busy);
+  if (idle) { idle._busy = true; return idle; }
+  // All busy — create a temporary overflow worker
+  const w = new Worker(getNestWorkerURL());
+  w._busy = true; w._temp = true;
+  return w;
+}
+
 function runScanWorker(grid, gw, gh, mask, mw, mh, scanMaxY, step) {
   return new Promise(resolve => {
-    const w = new Worker(getNestWorkerURL());
-    // Transfer copies so each worker gets its own view
+    const w = getPoolWorker();
     const gridCopy = new Uint8Array(grid);
     const maskCopy = new Uint8Array(mask);
-    w.onmessage = e => { w.terminate(); resolve(e.data); };
-    w.onerror = () => { w.terminate(); resolve({ bestX: -1, bestY: -1, bestScore: Infinity }); };
+    w.onmessage = e => { w._busy = false; if (w._temp) w.terminate(); resolve(e.data); };
+    w.onerror = () => { w._busy = false; if (w._temp) w.terminate(); resolve({ bestX: -1, bestY: -1, bestScore: Infinity }); };
     w.postMessage({ grid: gridCopy, gw, gh, mask: maskCopy, mw, mh, scanMaxY, step });
   });
 }
+
+// Mask cache — avoid rebuilding identical masks for same image/size/rotation
+const _maskCache = new Map();
 
 // Content-aware nesting with clean contentOffset coordinate math.
 // Every mask tracks contentOffsetX/Y = grid pixels from mask edge to content origin.
@@ -421,17 +440,22 @@ async function nestItems(img, wIn, hIn, gap, cutOffset, cutDieCutExtra, cutShape
     stampMask(grid, gw, gh, dilated.mask, dilated.w, dilated.h, stampX, stampY);
   }
 
-  // Prepare masks for new item (try rotations)
+  // Prepare masks for new item (try rotations) — with caching
   const rotations = autoRotate ? [0, 90, 180, 270] : [0];
   const masks = rotations.map(rot => {
+    const cacheKey = `${img.src.slice(-40)}_${wIn}_${hIn}_${rot}_${halfGapPx}_${cutEnabled}_${cutShape}_${cutOffset}`;
+    const cached = _maskCache.get(cacheKey);
+    if (cached) return { rot, ...cached };
     const raw = buildItemMask(img, wIn, hIn, cutEnabled, cutShape, cutOffset, 0, rot);
     const dilated = dilateMask(raw.mask, raw.w, raw.h, halfGapPx);
-    return {
-      rot,
+    const entry = {
       mask: dilated.mask, w: dilated.w, h: dilated.h,
       contentOffsetX: raw.contentOffsetX + dilated.pad,
       contentOffsetY: raw.contentOffsetY + dilated.pad,
     };
+    if (_maskCache.size >= 50) _maskCache.clear();
+    _maskCache.set(cacheKey, entry);
+    return { rot, ...entry };
   });
 
   // ─── Row-scan placement with smart bounds + async yields ───
@@ -1241,6 +1265,7 @@ export default function GangSheetBuilder() {
         if(e.key==="ArrowUp") ka.nudgeSelected(0,-step);
         if(e.key==="ArrowDown") ka.nudgeSelected(0,step);
       }
+      if(e.key==="?"&&!inInput(e)) ka.setShowShortcuts(v=>!v);
     };
     const onKeyUp=e=>{if(e.code==="Space"){spaceHeld.current=false;setSpaceDown(false);}};
     window.addEventListener("keydown",onKeyDown);
@@ -1349,7 +1374,14 @@ export default function GangSheetBuilder() {
       }
       if(doTrim){
         const trimmed=trimImage(img);
-        if(trimmed){src=trimmed.src;nw=trimmed.naturalW;nh=trimmed.naturalH;cachedImg(src);}
+        if(trimmed){
+          src=trimmed.src;nw=trimmed.naturalW;nh=trimmed.naturalH;cachedImg(src);
+          setTrimNotice(`Trimmed to ${nw}×${nh}px`);
+        } else {
+          setTrimNotice("No transparency to trim");
+        }
+        clearTimeout(trimNoticeTimer.current);
+        trimNoticeTimer.current=setTimeout(()=>setTrimNotice(""),3000);
       }
       updActive({uploadedImg:{src,naturalW:nw,naturalH:nh,name:file.name},placeW:(nw/sheetDPI).toFixed(3),placeH:(nh/sheetDPI).toFixed(3),warning:""});
       setLeftTab("add");
@@ -1460,6 +1492,12 @@ export default function GangSheetBuilder() {
   const [nestingInProgress,setNestingInProgress]=useState(false);
   const [nestingProgress,setNestingProgress]=useState("");
   const [batchFiles,setBatchFiles]=useState(null);
+  const [trimNotice,setTrimNotice]=useState("");
+  const trimNoticeTimer=useRef(null);
+  const [dragTabId,setDragTabId]=useState(null);
+  const [dragOverTabId,setDragOverTabId]=useState(null);
+  const [showShortcuts,setShowShortcuts]=useState(false);
+  const [batchAllQty,setBatchAllQty]=useState("");
   const [batchPlacing,setBatchPlacing]=useState(false);
   const [batchProgress,setBatchProgress]=useState("");
   const autoPlace=async()=>{
@@ -1509,9 +1547,11 @@ export default function GangSheetBuilder() {
         packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
       }
 
-      if(packed.length<n&&!warn) warn=`Some items didn't fit.`;
       const belowCanvas=packed.some(p=>p.y+p.h>sheetH);
       if(belowCanvas&&!autoDistribute&&!warn) warn="⚠ Placed below canvas — increase sheet height to print";
+
+      // Track remaining for overflow distribution
+      sizeJobs[si]._placed=packed.length;
 
       const color=nextColor(),groupId=uid();
       const group={id:groupId,name:sizeJobs.length>1?`${shortName} (${w}"×${h}")`:shortName,color,src:uploadedImg.src,w,h,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation,flipH,flipV};
@@ -1528,6 +1568,62 @@ export default function GangSheetBuilder() {
       placedTotal+=packed.length;
     }
 
+    // ─── Auto-distribute overflow to new sheets ───
+    const overflowSheets=[];
+    if(autoDistribute){
+      // Collect remaining counts per size job
+      const remaining=sizeJobs.map((j,i)=>({...j,left:j.copies-(j._placed||0)})).filter(j=>j.left>0);
+      let totalRemaining=remaining.reduce((s,j)=>s+j.left,0);
+
+      while(totalRemaining>0){
+        const sheetSettings={sheetW,sheetH,sheetDPI,margin,gap:g,showMargin,showGrid,gridSize,gridStyle,snapToGrid,snapSize,canvasBg,mirrorExport,autoRotateFill,autoRotatePlace,autoDistribute,snapToItems,autoTrimImport,cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius,inkCostPerSqIn};
+        const ns=makeSheet({...sheetSettings,label:uniqueLabel(`Sheet ${sheets.length+overflowSheets.length+1}`)});
+        let nsAcc=[];
+        let placedThisSheet=0;
+
+        for(const rj of remaining){
+          if(rj.left<=0) continue;
+          const w=rj.w,h=rj.h,n=rj.left;
+          const dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.08:0;
+          let packed;
+
+          setNestingProgress(`Overflow sheet ${overflowSheets.length+1}: placing ${w}"×${h}"…`);
+          await new Promise(r=>setTimeout(r,0));
+
+          if(autoRotatePlace&&img.complete&&img.naturalWidth){
+            packed=await nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,nsAcc,true,null,false);
+            packed=packed.map(p=>({...p,rotated:p.rotation!==0}));
+          } else {
+            const gFull=g+(co+dieCutExtra)*2;
+            packed=packItems(nsAcc.map(p=>{const pco=cutEnabled?(cutOffset||0):0;const pdce=cutEnabled&&cutShape==="die-cut"?Math.max(p.w,p.h)*0.08:0;const exp=pco+pdce;return{...p,x:p.x-exp,y:p.y-exp,w:p.w+exp*2,h:p.h+exp*2};}),w,h,gFull,sheetW,sheetH,n,m).map(p=>({...p,rotated:false}));
+          }
+
+          if(packed.length>0){
+            const color=nextColor(),groupId=uid();
+            ns.groups.push({id:groupId,name:sizeJobs.length>1?`${shortName} (${w}"×${h}")`:shortName,color,src:uploadedImg.src,w,h,gap:g,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,notes:jobNotes,rotation,flipH,flipV});
+            const newPls=packed.map(p=>{
+              const rot=p.rotation!==undefined?(rotation+p.rotation)%360:p.rotated?(rotation+90)%360:rotation;
+              const isSwap=rot===90||rot===270;
+              const pw=isSwap?h:w,ph=isSwap?w:h;
+              return{id:uid(),groupId,color,src:uploadedImg.src,name:uploadedImg.name,x:p.x,y:p.y,w:pw,h:ph,rotation:rot,flipH,flipV,naturalW:uploadedImg.naturalW,naturalH:uploadedImg.naturalH,...cutProps};
+            });
+            ns.placements.push(...newPls);
+            nsAcc=[...nsAcc,...newPls];
+            rj.left-=packed.length;
+            placedThisSheet+=packed.length;
+          }
+        }
+
+        if(placedThisSheet===0) break; // safety: item too large for sheet
+        overflowSheets.push(ns);
+        totalRemaining=remaining.reduce((s,j)=>s+j.left,0);
+      }
+
+      if(remaining.some(j=>j.left>0)&&!warn) warn="Some items didn't fit.";
+    } else {
+      if(placedTotal<sizeJobs.reduce((s,j)=>s+j.copies,0)&&!warn) warn="Some items didn't fit.";
+    }
+
     setNestingInProgress(false);
 
     // DPI warning for base size
@@ -1537,6 +1633,10 @@ export default function GangSheetBuilder() {
     else if(caution&&!warn) warn=`⚠ ${Math.round(effDpi)}dpi at this size`;
 
     updActive(s=>({warning:warn,extraSizes:[],groups:[...s.groups,...allNewGroups],placements:[...s.placements,...allNewPlacements]}));
+    if(overflowSheets.length){
+      setSheets(prev=>[...prev,...overflowSheets]);
+      setActiveId(overflowSheets[overflowSheets.length-1].id);
+    }
     if(isMobile) setDrawer(null);
   };
 
@@ -1593,9 +1693,11 @@ export default function GangSheetBuilder() {
         packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
       }
 
-      if(packed.length<n&&!warn) warn="Some items didn't fit.";
       const belowCanvas=packed.some(p=>p.y+p.h>sheetH);
       if(belowCanvas&&!autoDistribute&&!warn) warn="⚠ Placed below canvas — increase sheet height to print";
+
+      // Track remaining for overflow
+      jobs[ji]._placed=packed.length;
 
       const color=nextColor(),groupId=uid(),shortName=job.name.replace(/\.[^.]+$/,"");
       allGroups.push({id:groupId,name:shortName,color,src:job.src,w,h,gap:g,naturalW:job.naturalW,naturalH:job.naturalH,notes:"",rotation:0,flipH:false,flipV:false});
@@ -1611,8 +1713,68 @@ export default function GangSheetBuilder() {
       jobsDone++;
     }
 
+    // ─── Auto-distribute overflow to new sheets ───
+    const batchOverflowSheets=[];
+    if(autoDistribute){
+      const remaining=jobs.map(j=>({...j,left:j.copies-(j._placed||0)})).filter(j=>j.left>0);
+      let totalRemaining=remaining.reduce((s,j)=>s+j.left,0);
+
+      while(totalRemaining>0){
+        const sheetSettings={sheetW,sheetH,sheetDPI,margin,gap:g,showMargin,showGrid,gridSize,gridStyle,snapToGrid,snapSize,canvasBg,mirrorExport,autoRotateFill,autoRotatePlace,autoDistribute,snapToItems,autoTrimImport,cutEnabled,cutShape,cutOffset,cutWidth,cutColor,cutRadius,inkCostPerSqIn};
+        const ns=makeSheet({...sheetSettings,label:uniqueLabel(`Sheet ${sheets.length+batchOverflowSheets.length+1}`)});
+        let nsAcc=[];
+        let placedThisSheet=0;
+
+        for(const rj of remaining){
+          if(rj.left<=0) continue;
+          const w=rj.w,h=rj.h,n=rj.left;
+          const dieCutExtra=cutEnabled&&cutShape==="die-cut"?Math.max(w,h)*0.08:0;
+          const img=cachedImg(rj.src);
+          let packed;
+
+          setBatchProgress(`Overflow sheet ${batchOverflowSheets.length+1}: ${rj.name}…`);
+          await new Promise(r=>setTimeout(r,0));
+
+          if(autoRotatePlace&&img&&img.complete&&img.naturalWidth){
+            packed=await nestItems(img,w,h,g,co,dieCutExtra,cutShape,cutEnabled,sheetW,sheetH,n,m,nsAcc,true,null,false);
+            packed=packed.map(p=>({...p,rotated:p.rotation!==0}));
+          } else {
+            const gFull=g+(co+dieCutExtra)*2;
+            packed=packItems(nsAcc.map(p=>{const pco=cutEnabled?(cutOffset||0):0;const pdce=cutEnabled&&cutShape==="die-cut"?Math.max(p.w,p.h)*0.08:0;const exp=pco+pdce;return{...p,x:p.x-exp,y:p.y-exp,w:p.w+exp*2,h:p.h+exp*2};}),w,h,gFull,sheetW,sheetH,n,m).map(p=>({...p,rotated:false}));
+          }
+
+          if(packed.length>0){
+            const color=nextColor(),groupId=uid(),shortName=rj.name.replace(/\.[^.]+$/,"");
+            ns.groups.push({id:groupId,name:shortName,color,src:rj.src,w,h,gap:g,naturalW:rj.naturalW,naturalH:rj.naturalH,notes:"",rotation:0,flipH:false,flipV:false});
+            const newPls=packed.map(p=>{
+              const rot=p.rotation||0;
+              const isRot=rot===90||rot===270;
+              const pw=isRot?h:w,ph=isRot?w:h;
+              return{id:uid(),groupId,color,src:rj.src,name:rj.name,x:p.x,y:p.y,w:pw,h:ph,rotation:rot,flipH:false,flipV:false,naturalW:rj.naturalW,naturalH:rj.naturalH,...cutProps};
+            });
+            ns.placements.push(...newPls);
+            nsAcc=[...nsAcc,...newPls];
+            rj.left-=packed.length;
+            placedThisSheet+=packed.length;
+          }
+        }
+
+        if(placedThisSheet===0) break; // safety: item too large for sheet
+        batchOverflowSheets.push(ns);
+        totalRemaining=remaining.reduce((s,j)=>s+j.left,0);
+      }
+
+      if(remaining.some(j=>j.left>0)&&!warn) warn="Some items didn't fit.";
+    } else {
+      if(jobs.some(j=>(j._placed||0)<j.copies)&&!warn) warn="Some items didn't fit.";
+    }
+
     setBatchPlacing(false);
     updActive(s=>({warning:warn,groups:[...s.groups,...allGroups],placements:[...s.placements,...allPlacements]}));
+    if(batchOverflowSheets.length){
+      setSheets(prev=>[...prev,...batchOverflowSheets]);
+      setActiveId(batchOverflowSheets[batchOverflowSheets.length-1].id);
+    }
     setBatchFiles(null);
   };
 
@@ -1734,7 +1896,7 @@ export default function GangSheetBuilder() {
     if(newPls.length===1){setSelected(newPls[0].id);setMultiSelected([]);}
     else if(newPls.length>1){setSelected(newPls[0].id);setMultiSelected(newPls.slice(1).map(p=>p.id));}
   };
-  keyActionRef.current = { deleteSelected, duplicateSelected, copySelected, pasteFromClipboard, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25 };
+  keyActionRef.current = { deleteSelected, duplicateSelected, copySelected, pasteFromClipboard, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25, setShowShortcuts };
   const rotateSelected  =deg=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>{if(p.id!==selected)return p;const oldRot=(p.rotation||0),newRot=((oldRot+deg+360)%360);const oldIs90=oldRot===90||oldRot===270,newIs90=newRot===90||newRot===270;const swap=oldIs90!==newIs90;return{...p,rotation:newRot,...(swap?{w:p.h,h:p.w,x:p.x+(p.w-p.h)/2,y:p.y+(p.h-p.w)/2}:{})};})}));};
   const flipSelected    =axis=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:axis==="h"?{...p,flipH:!p.flipH}:{...p,flipV:!p.flipV})}));};
   // Trim transparent pixels from a placement (smart-object-like)
@@ -2782,6 +2944,7 @@ export default function GangSheetBuilder() {
         <span style={{fontSize:10,color:C.muted}}>Auto-trim on import</span>
         <Toggle on={autoTrimImport} onClick={()=>updActive({autoTrimImport:!autoTrimImport})}/>
       </div>
+      {trimNotice&&<div style={{fontSize:9,color:C.accent,marginBottom:4,transition:"opacity 0.3s"}}>{trimNotice}</div>}
       {uploadedImg&&placeW&&placeH&&(()=>{const{effDpi,warn,caution}=nativeRes(uploadedImg.naturalW,uploadedImg.naturalH,parseFloat(placeW)||1,parseFloat(placeH)||1,sheetDPI);return warn?<div style={S.warn}>⚠ {Math.round(effDpi)}dpi — may blur</div>:caution?<div style={{...S.warn,borderColor:"#4a3000"}}>⚠ {Math.round(effDpi)}dpi (target {sheetDPI})</div>:<div style={S.ok}>✓ {Math.round(effDpi)}dpi — good</div>})()}
       <div><div style={S.label}>Aspect Lock</div>
         <div style={{display:"flex",gap:5}}>
@@ -2804,6 +2967,17 @@ export default function GangSheetBuilder() {
           {isMobile?<Stepper value={gap} onChange={v=>updActive({gap:parseFloat(v)||0})} min={0} step={0.05}/>:<input style={S.input} type="number" min="0" step="0.05" value={gap} onChange={e=>updActive({gap:parseFloat(e.target.value)||0})}/>}
         </div>
       </div>
+      {uploadedImg&&placeW&&placeH&&copies>1&&(()=>{
+        const iw=parseFloat(placeW)||1,ih=parseFloat(placeH)||1,g2=parseFloat(gap)||0;
+        const uw=sheetW-(parseFloat(margin)||0)*2,uh=sheetH-(parseFloat(margin)||0)*2;
+        const cols=Math.max(1,Math.floor(uw/(iw+g2))),rows=Math.max(1,Math.floor(uh/(ih+g2)));
+        const perSheet=cols*rows;
+        const totalCopies=parseInt(copies)||1;
+        const sheetsNeeded=Math.ceil(totalCopies/perSheet);
+        return <div style={{fontSize:9,color:C.muted,marginBottom:4}}>
+          {autoDistribute?`~${perSheet}/sheet, ${sheetsNeeded} sheet${sheetsNeeded>1?"s":""} needed`:`~${perSheet} fit on this sheet`}
+        </div>;
+      })()}
       <div><div style={S.label}>Transform</div>
         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
           {[0,90,180,270].map(r=><button key={r} style={{...S.lockBtn(rotation===r),flex:"unset",minHeight:touchTarget,padding:"0 10px"}} onClick={()=>{updActive({rotation:r});if(selected)updActive(s=>({placements:s.placements.map(p=>{if(p.id!==selected)return p;const oldRot=p.rotation||0;const oldIs90=oldRot===90||oldRot===270,newIs90=r===90||r===270;const swap=oldIs90!==newIs90;return{...p,rotation:r,...(swap?{w:p.h,h:p.w,x:p.x+(p.w-p.h)/2,y:p.y+(p.h-p.w)/2}:{})};})}));}}>{r}°</button>)}
@@ -3217,6 +3391,11 @@ export default function GangSheetBuilder() {
                 <span style={{fontSize:9,color:C.muted}}>Gap</span>
                 <input style={{...S.input,width:50,fontSize:10}} type="number" min="0" step="0.05" value={gap} onChange={e=>updActive({gap:parseFloat(e.target.value)||0})}/>
               </div>
+              <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
+                <span style={{fontSize:9,color:C.muted}}>All qty</span>
+                <input style={{...S.input,width:48,fontSize:10}} type="number" min="1" max="999" value={batchAllQty} placeholder="—" onChange={e=>setBatchAllQty(e.target.value)}/>
+                <button style={{...S.btn("ghost"),padding:"3px 8px",fontSize:9,minHeight:"unset"}} onClick={()=>{const v=parseInt(batchAllQty)||1;setBatchFiles(prev=>prev?prev.map(b=>({...b,copies:v,sizes:b.sizes?.map(s=>({...s,copies:v}))})):prev);}}>Apply</button>
+              </div>
             </div>
             <div style={{flex:1,overflowY:"auto",padding:"8px 14px"}}>
               {batchFiles.map((bf,i)=>{
@@ -3263,7 +3442,7 @@ export default function GangSheetBuilder() {
                     <span style={{fontSize:8,color:C.muted}}>×</span>
                     <input style={{...S.input,flex:1,fontSize:10}} type="number" min="0.01" step="0.1" value={sz.h||""} onChange={e=>{const v=e.target.value;const pv=parseFloat(v);if(!v||isNaN(pv)||!isFinite(pv)){updSize(sz.id,{h:v});return;}updSize(sz.id,ar>0?{h:v,w:(pv*ar).toFixed(3)}:{h:v});}}/>
                     <span style={{fontSize:8,color:C.muted}}>qty</span>
-                    <input style={{...S.input,width:36,fontSize:10}} type="number" min="1" max="999" value={sz.copies||1} onChange={e=>updSize(sz.id,{copies:parseInt(e.target.value)||1})}/>
+                    <input style={{...S.input,width:48,fontSize:10}} type="number" min="1" max="999" value={sz.copies||1} onChange={e=>updSize(sz.id,{copies:parseInt(e.target.value)||1})}/>
                     {si>0&&<button style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:10,padding:"0 2px"}} onClick={()=>setBatchFiles(prev=>prev.map(b=>b.id!==bf.id?b:{...b,sizes:b.sizes.filter(s=>s.id!==sz.id)}))}>✕</button>}
                   </div>)}
                   <button style={{fontSize:8,color:C.accent,background:"none",border:"none",cursor:"pointer",padding:"2px 0",opacity:0.7}} onClick={()=>{
@@ -3313,6 +3492,7 @@ export default function GangSheetBuilder() {
           </div>
           <div style={{display:"flex",gap:6}}>
             <button style={{...S.btn("ghost"),padding:"5px 9px",fontSize:11,minHeight:"unset"}} onClick={()=>setShowPresets(true)}>⚙</button>
+            <button style={{...S.btn("ghost"),padding:"5px 9px",fontSize:11,minHeight:"unset"}} onClick={()=>setShowShortcuts(true)} title="Keyboard Shortcuts (?)">?</button>
             <button style={{...S.btn("ghost"),padding:"5px 9px",fontSize:11,minHeight:"unset"}} onClick={()=>setShowSave(true)}>💾</button>
           </div>
         </div>
@@ -3342,7 +3522,12 @@ export default function GangSheetBuilder() {
           {/* Sheet tab bar */}
           <div style={S.sheetTabBar}>
             {sheets.map(s=>(
-              <div key={s.id} className="sht" style={S.sheetTab(s.id===activeId)} onClick={()=>switchTab(s.id)} onContextMenu={e=>{e.preventDefault();setTabCtx({x:e.clientX,y:e.clientY,sheetId:s.id});}}>
+              <div key={s.id} className="sht" draggable={editingTabId!==s.id} style={{...S.sheetTab(s.id===activeId),...(dragOverTabId===s.id?{borderLeft:`2px solid ${C.accentSolid}`}:{})}} onClick={()=>switchTab(s.id)} onContextMenu={e=>{e.preventDefault();setTabCtx({x:e.clientX,y:e.clientY,sheetId:s.id});}}
+                onDragStart={e=>{setDragTabId(s.id);e.dataTransfer.effectAllowed="move";}}
+                onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect="move";if(s.id!==dragTabId)setDragOverTabId(s.id);}}
+                onDragLeave={()=>setDragOverTabId(null)}
+                onDrop={e=>{e.preventDefault();setDragOverTabId(null);if(!dragTabId||dragTabId===s.id)return;setSheets(prev=>{const arr=[...prev];const fromIdx=arr.findIndex(x=>x.id===dragTabId);const toIdx=arr.findIndex(x=>x.id===s.id);if(fromIdx<0||toIdx<0)return prev;const [moved]=arr.splice(fromIdx,1);arr.splice(toIdx,0,moved);return arr;});}}
+                onDragEnd={()=>{setDragTabId(null);setDragOverTabId(null);}}>
                 {editingTabId===s.id?(
                   <input ref={tabInputRef} style={{background:"transparent",border:"none",borderBottom:`1px solid ${C.accent}`,color:C.text,fontSize:10,width:Math.max(60,editingTabLabel.length*7+10),outline:"none",padding:"0 2px"}}
                     value={editingTabLabel} onChange={e=>setEditingTabLabel(e.target.value)} onBlur={commitRenameTab} onKeyDown={e=>{if(e.key==="Enter")commitRenameTab();e.stopPropagation();}} onClick={e=>e.stopPropagation()}/>
@@ -3556,18 +3741,44 @@ export default function GangSheetBuilder() {
           </div>
         </div>
       )}
-      {confirmClose&&(
-        <div style={S.modal} onClick={()=>setConfirmClose(null)}>
+      {confirmClose&&(()=>{
+        const cs=sheets.find(s=>s.id===confirmClose.sheetId);
+        const csArea=cs?sqIn(cs.placements):0;
+        return <div style={S.modal} onClick={()=>setConfirmClose(null)}>
           <div style={{...S.modalBox,width:isMobile?"90vw":340}} onClick={e=>e.stopPropagation()}>
             <div style={S.modalHead}><span style={{fontSize:13,fontWeight:700,color:C.accent}}>Close Sheet</span></div>
             <div style={{padding:"16px 18px"}}>
               <div style={{fontSize:13,color:C.text,marginBottom:6}}>Close <strong>"{confirmClose.label}"</strong>?</div>
-              {confirmClose.hasContent&&<div style={{fontSize:11,color:C.amber,marginBottom:12}}>This sheet has {sheets.find(s=>s.id===confirmClose.sheetId)?.placements?.length||0} placed items that will be removed.</div>}
+              {confirmClose.hasContent&&<div style={{fontSize:11,color:C.amber,marginBottom:12}}>This sheet has {cs?.placements?.length||0} placed items ({csArea.toFixed(1)} sq in) that will be removed.</div>}
               {!confirmClose.hasContent&&<div style={{fontSize:11,color:C.muted,marginBottom:12}}>This sheet is empty.</div>}
               <div style={{display:"flex",gap:8}}>
                 <button style={{...S.btn("danger"),flex:1}} onClick={()=>doCloseSheet(confirmClose.sheetId)}>Close</button>
                 <button style={{...S.btn("ghost"),flex:1}} onClick={()=>setConfirmClose(null)}>Cancel</button>
               </div>
+            </div>
+          </div>
+        </div>;
+      })()}
+      {showShortcuts&&(
+        <div style={S.modal} onClick={()=>setShowShortcuts(false)}>
+          <div style={{...S.modalBox,width:isMobile?"90vw":360}} onClick={e=>e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <span style={{fontSize:13,fontWeight:700,color:C.accent}}>Keyboard Shortcuts</span>
+              <button style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:0}} onClick={()=>setShowShortcuts(false)}>✕</button>
+            </div>
+            <div style={{padding:"12px 18px",fontSize:11,color:C.text}}>
+              {[
+                ["V","Select tool"],["H","Pan / Hand tool"],["Del / Backspace","Delete selected"],
+                ["Ctrl+C","Copy"],["Ctrl+V","Paste"],["Ctrl+D","Duplicate"],
+                ["Ctrl+A","Select all (cycles group → all)"],
+                ["Ctrl+Z","Undo"],["Ctrl+Y / Ctrl+Shift+Z","Redo"],
+                ["Ctrl+0","Fit view"],["Ctrl+G","Toggle grid"],["Ctrl+R","Toggle rulers"],
+                ["Arrow keys","Nudge selected"],["Shift + Arrows","Nudge 10×"],
+                ["?","This dialog"],
+              ].map(([key,desc])=><div key={key} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${C.border}`}}>
+                <span style={{fontFamily:"monospace",fontSize:10,color:C.accent,minWidth:140}}>{key}</span>
+                <span style={{color:C.muted,textAlign:"right"}}>{desc}</span>
+              </div>)}
             </div>
           </div>
         </div>
