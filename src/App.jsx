@@ -1896,7 +1896,17 @@ export default function GangSheetBuilder() {
     const offset=0.25*cb.pasteCount;
     const gidMap={};
     const newGroups=cb.groups.map(g=>{const nid=uid();gidMap[g.id]=nid;return{...g,id:nid};});
-    const newPls=cb.placements.map(p=>({...p,id:uid(),groupId:gidMap[p.groupId]||p.groupId,x:p.x+offset,y:p.y+offset}));
+    // Calculate bounding box of pasted items and shift to fit within current sheet
+    const rawPls=cb.placements.map(p=>({...p,id:uid(),groupId:gidMap[p.groupId]||p.groupId,x:p.x+offset,y:p.y+offset}));
+    const minX=Math.min(...rawPls.map(p=>p.x)), minY=Math.min(...rawPls.map(p=>p.y));
+    const maxX=Math.max(...rawPls.map(p=>p.x+p.w)), maxY=Math.max(...rawPls.map(p=>p.y+p.h));
+    let shiftX=0, shiftY=0;
+    // If the group extends beyond the sheet, shift it back into view
+    if(minX>=sheetW) shiftX=-(minX-0.25);        // entirely off right edge → move to left edge
+    else if(maxX<0) shiftX=-minX+0.25;            // entirely off left edge
+    if(minY>=sheetH) shiftY=-(minY-0.25);         // entirely below sheet → move to top
+    else if(maxY<0) shiftY=-minY+0.25;            // entirely above sheet
+    const newPls=rawPls.map(p=>({...p,x:p.x+shiftX,y:p.y+shiftY}));
     newPls.forEach(p=>cachedImg(p.src));
     // Use functional update to read current groups from state (not stale closure)
     updActive(s=>{
