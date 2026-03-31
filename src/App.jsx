@@ -3372,8 +3372,8 @@ export default function GangSheetBuilder() {
         </div>
       )}
       {batchFiles&&!batchPlacing&&(
-        <div style={S.modal} onClick={()=>setBatchFiles(null)}>
-          <div style={{...S.modalBox,width:isMobile?"96vw":620,maxHeight:"86vh"}} onClick={e=>e.stopPropagation()}>
+        <div style={S.modal}>
+          <div style={{...S.modalBox,width:isMobile?"96vw":620,maxHeight:"86vh"}}>
             <div style={S.modalHead}>
               <span style={{fontWeight:800,fontSize:11,letterSpacing:"0.08em",color:C.accent}}>BATCH UPLOAD</span>
               <button style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:0}} onClick={()=>setBatchFiles(null)}>✕</button>
