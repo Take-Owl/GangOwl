@@ -2588,6 +2588,12 @@ export default function GangSheetBuilder() {
     const channels=bg?3:4;
     const ihdrChunk=pngChunk("IHDR",ihdr);
 
+    // pHYs chunk — pixels per meter for DPI metadata
+    const ppm=Math.round(dpi/0.0254); // DPI to pixels per meter
+    const phys=new Uint8Array(9);const physDv=new DataView(phys.buffer);
+    physDv.setUint32(0,ppm);physDv.setUint32(4,ppm);phys[8]=1; // 1=meter
+    const physChunk=pngChunk("pHYs",phys);
+
     // Build IDAT data strip-by-strip using DeflateStream
     const MAX_DIM=16384;const MAX_AREA=100_000_000;
     const stripH=Math.min(MAX_DIM,Math.max(1,Math.floor(MAX_AREA/fullW)));
@@ -2650,15 +2656,32 @@ export default function GangSheetBuilder() {
 
     const iendChunk=pngChunk("IEND",new Uint8Array(0));
     // Assemble final PNG
-    let totalLen=sig.length+ihdrChunk.length+iendChunk.length;
+    let totalLen=sig.length+ihdrChunk.length+physChunk.length+iendChunk.length;
     for(const c of idatChunks) totalLen+=c.length;
     const png=new Uint8Array(totalLen);
     let off=0;
     png.set(sig,off);off+=sig.length;
     png.set(ihdrChunk,off);off+=ihdrChunk.length;
+    png.set(physChunk,off);off+=physChunk.length;
     for(const c of idatChunks){png.set(c,off);off+=c.length;}
     png.set(iendChunk,off);
     return new Blob([png],{type:"image/png"});
+  };
+
+  // Inject pHYs DPI chunk into a PNG blob from canvas.toBlob()
+  const injectPngDpi=async(blob,dpi)=>{
+    const buf=new Uint8Array(await blob.arrayBuffer());
+    // pHYs chunk: insert after IHDR (IHDR is at offset 8, length=13+12=25 bytes, so after offset 33)
+    const ppm=Math.round(dpi/0.0254);
+    const phys=new Uint8Array(9);const dv=new DataView(phys.buffer);
+    dv.setUint32(0,ppm);dv.setUint32(4,ppm);phys[8]=1;
+    const physChunk=pngChunk("pHYs",phys);
+    const ihdrEnd=8+4+4+13+4; // sig(8) + length(4) + type(4) + data(13) + crc(4) = 33
+    const out=new Uint8Array(buf.length+physChunk.length);
+    out.set(buf.subarray(0,ihdrEnd),0);
+    out.set(physChunk,ihdrEnd);
+    out.set(buf.subarray(ihdrEnd),ihdrEnd+physChunk.length);
+    return new Blob([out],{type:"image/png"});
   };
 
   // Build a minimal PDF with an embedded JPEG image
@@ -2726,7 +2749,8 @@ export default function GangSheetBuilder() {
         const pdfBlob=await buildPdf(imgBlob,widthPt,heightPt);
         downloadBlob(pdfBlob,`${baseName}.pdf`);
       } else {
-        downloadBlob(imgBlob,`${baseName}.${ext}`);
+        const finalBlob=exportFormat==="png"?await injectPngDpi(imgBlob,sheet.sheetDPI):imgBlob;
+        downloadBlob(finalBlob,`${baseName}.${ext}`);
       }
       setExportPct(pctFn(100));
       return;
