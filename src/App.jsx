@@ -1883,8 +1883,11 @@ export default function GangSheetBuilder() {
     clipboardRef.current={placements:copiedPls,groups:copiedGrps,pasteCount:0};
   };
   const cutSelected=()=>{
+    if(!selected) return;
     copySelected();
-    deleteSelected();
+    // Remove silently — items are safe in clipboard, no confirmation needed
+    const ids=multiSelected.length>0?[...multiSelected,selected].filter(Boolean):[selected].filter(Boolean);
+    if(ids.length) doDelete(ids);
   };
   const pasteFromClipboard=()=>{
     const cb=clipboardRef.current;
