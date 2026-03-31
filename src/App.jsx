@@ -775,11 +775,12 @@ function Drawer({ open, onClose, title, children, height="85vh" }) {
 }
 
 // ─── Context menu (long-press on canvas item) ─────────────────────────────────
-function ContextMenu({ x, y, onClose, onDelete, onDuplicate, onRotate, onFlipH, onFlipV, onTrim, onCopy, onPaste, canvasOnly }) {
+function ContextMenu({ x, y, onClose, onDelete, onDuplicate, onRotate, onFlipH, onFlipV, onTrim, onCut, onCopy, onPaste, canvasOnly }) {
   if (x === null) return null;
   const items = canvasOnly ? [
     {label:"📌 Paste", fn:()=>{onPaste();onClose();}},
   ] : [
+    {label:"✂ Cut", fn:()=>{onCut();onClose();}},
     {label:"📋 Copy", fn:()=>{onCopy();onClose();}},
     {label:"📌 Paste", fn:()=>{onPaste();onClose();}},
     {label:"↻ Rotate 90°", fn:()=>{onRotate(90);onClose();}},
@@ -863,6 +864,7 @@ export default function GangSheetBuilder() {
   const [dragOverId, setDragOverId] = useState(null);
 
   // ── Undo/Redo ──
+  const isDraggingCanvas = useRef(false);
   const undoStack = useRef([]);
   const redoStack = useRef([]);
   const undoSkip = useRef(false);
@@ -1026,6 +1028,7 @@ export default function GangSheetBuilder() {
   const prevSheetsRef = useRef(null);
   useEffect(()=>{
     if(undoSkip.current){undoSkip.current=false;return;}
+    if(isDraggingCanvas.current) return; // skip snapshots during drag — capture on mouseup
     // Deep-compare: only push if placements/groups actually changed
     const snap=JSON.stringify(sheets.map(s=>({id:s.id,placements:s.placements.map(p=>({id:p.id,x:p.x,y:p.y,w:p.w,h:p.h,rotation:p.rotation,flipH:p.flipH,flipV:p.flipV,groupId:p.groupId,name:p.name})),groups:s.groups.map(g=>({id:g.id,name:g.name}))})));
     if(snap===prevSheetsRef.current) return;
@@ -1227,6 +1230,7 @@ export default function GangSheetBuilder() {
       if((e.key==="Delete"||e.key==="Backspace")&&!inInput(e)){e.preventDefault();ka.deleteSelected();}
       // Ctrl+C to copy, Ctrl+V to paste
       if(e.ctrlKey&&e.key.toLowerCase()==="c"&&!inInput(e)){e.preventDefault();ka.copySelected();}
+      if(e.ctrlKey&&e.key.toLowerCase()==="x"&&!inInput(e)){e.preventDefault();ka.cutSelected();}
       if(e.ctrlKey&&e.key.toLowerCase()==="v"&&!inInput(e)){e.preventDefault();ka.pasteFromClipboard();}
       // Ctrl+D to duplicate
       if(e.ctrlKey&&e.key==="d"&&!inInput(e)){e.preventDefault();ka.duplicateSelected();}
@@ -1541,7 +1545,7 @@ export default function GangSheetBuilder() {
         packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,overflowSH,n,m).map(p=>({...p,rotated:false}));
       }
 
-      if(!packed.length){
+      if(!packed.length&&!autoDistribute){
         const gFull=g+(co+dieCutExtra)*2;
         const maxBottom=accPlacements.length?Math.max(...accPlacements.map(p=>p.y+p.h)):0;
         packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
@@ -1687,7 +1691,7 @@ export default function GangSheetBuilder() {
         packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,overflowSH,n,m).map(p=>({...p,rotated:false}));
       }
 
-      if(!packed.length){
+      if(!packed.length&&!autoDistribute){
         const gFull=g+(co+dieCutExtra)*2;
         const maxBottom=accPlacements.length?Math.max(...accPlacements.map(p=>p.y+p.h)):0;
         packed=packItems(inflateByCut(accPlacements),w,h,gFull,sheetW,maxBottom+h*n+gFull*n+m*2,n,m).map(p=>({...p,rotated:false}));
@@ -1878,6 +1882,10 @@ export default function GangSheetBuilder() {
     const copiedGrps=grps.filter(g=>groupIds.has(g.id)).map(g=>({...g}));
     clipboardRef.current={placements:copiedPls,groups:copiedGrps,pasteCount:0};
   };
+  const cutSelected=()=>{
+    copySelected();
+    deleteSelected();
+  };
   const pasteFromClipboard=()=>{
     const cb=clipboardRef.current;
     if(!cb||!cb.placements.length) return;
@@ -1896,7 +1904,7 @@ export default function GangSheetBuilder() {
     if(newPls.length===1){setSelected(newPls[0].id);setMultiSelected([]);}
     else if(newPls.length>1){setSelected(newPls[0].id);setMultiSelected(newPls.slice(1).map(p=>p.id));}
   };
-  keyActionRef.current = { deleteSelected, duplicateSelected, copySelected, pasteFromClipboard, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25, setShowShortcuts };
+  keyActionRef.current = { deleteSelected, duplicateSelected, copySelected, cutSelected, pasteFromClipboard, setSelected, setMultiSelected, selected, multiSelected, selectedItem, groups, placements, setZoom, canvasWrapRef, sheetW, sheetH, previewScale, updActive, showGrid, undo, redo, nudgeSelected, snapSize: snapSize||0.25, setShowShortcuts };
   const rotateSelected  =deg=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>{if(p.id!==selected)return p;const oldRot=(p.rotation||0),newRot=((oldRot+deg+360)%360);const oldIs90=oldRot===90||oldRot===270,newIs90=newRot===90||newRot===270;const swap=oldIs90!==newIs90;return{...p,rotation:newRot,...(swap?{w:p.h,h:p.w,x:p.x+(p.w-p.h)/2,y:p.y+(p.h-p.w)/2}:{})};})}));};
   const flipSelected    =axis=>{if(!selectedItem)return;updActive(s=>({placements:s.placements.map(p=>p.id!==selected?p:axis==="h"?{...p,flipH:!p.flipH}:{...p,flipV:!p.flipV})}));};
   // Trim transparent pixels from a placement (smart-object-like)
@@ -2261,10 +2269,10 @@ export default function GangSheetBuilder() {
           // Drag all selected items
           const allIds=[...new Set([selected,...multiSelected].filter(Boolean))];
           const origins=allIds.map(id=>{const pl=placements.find(pp=>pp.id===id);return pl?{id,origX:pl.x,origY:pl.y,origW:pl.w,origH:pl.h}:null;}).filter(Boolean);
-          setDragging({id:p.id,startX:x,startY:y,origX:p.x,origY:p.y,multi:origins});
+          isDraggingCanvas.current=true;setDragging({id:p.id,startX:x,startY:y,origX:p.x,origY:p.y,multi:origins});
         } else {
           setSelected(p.id);setMultiSelected([]);
-          if(!p.locked) setDragging({id:p.id,startX:x,startY:y,origX:p.x,origY:p.y});
+          if(!p.locked){isDraggingCanvas.current=true;setDragging({id:p.id,startX:x,startY:y,origX:p.x,origY:p.y});}
         }
       }
     } else {setSelected(null);setMultiSelected([]);}
@@ -2395,7 +2403,7 @@ export default function GangSheetBuilder() {
       const p=placements.find(p=>p.id===resizing.id);
       if(p) updActive(s=>({groups:s.groups.map(g=>g.id!==p.groupId?g:{...g,w:p.w,h:p.h})}));
     }
-    setDragging(null);setResizing(null);setRotating(null);setResizeTooltip(null);desktopPanRef.current=null;
+    isDraggingCanvas.current=false;setDragging(null);setResizing(null);setRotating(null);setResizeTooltip(null);desktopPanRef.current=null;
   };
   // Attach window-level listeners during drag/rotate/resize so events continue outside canvas
   useEffect(()=>{
@@ -2453,7 +2461,7 @@ export default function GangSheetBuilder() {
     },500);
     // Drag start
     const p=hitTest(x,y);
-    if(p){setSelected(p.id);setDragging({id:p.id,startX:x,startY:y,origX:p.x,origY:p.y});}
+    if(p){setSelected(p.id);isDraggingCanvas.current=true;setDragging({id:p.id,startX:x,startY:y,origX:p.x,origY:p.y});}
     else{
       setSelected(null);
       panRef.current={startX:t.clientX,startY:t.clientY,panX,panY};
@@ -2477,7 +2485,7 @@ export default function GangSheetBuilder() {
       // Pan canvas when not dragging an item
     }
   };
-  const onTouchEnd=()=>{clearTimeout(longPressTimer.current);setDragging(null);pinchRef.current=null;panRef.current=null;};
+  const onTouchEnd=()=>{clearTimeout(longPressTimer.current);isDraggingCanvas.current=false;setDragging(null);pinchRef.current=null;panRef.current=null;};
 
   // ── Export ──
   // Preload all placement images so they're cached for tile rendering
@@ -3678,6 +3686,7 @@ export default function GangSheetBuilder() {
         onFlipH={()=>{flipSelected("h");setCtxMenu({x:null,y:null});}}
         onFlipV={()=>{flipSelected("v");setCtxMenu({x:null,y:null});}}
         onTrim={()=>{trimSelected();setCtxMenu({x:null,y:null});}}
+        onCut={()=>{cutSelected();setCtxMenu({x:null,y:null});}}
         onCopy={()=>{copySelected();setCtxMenu({x:null,y:null});}}
         onPaste={()=>{pasteFromClipboard();setCtxMenu({x:null,y:null});}}/>
 
@@ -3773,7 +3782,7 @@ export default function GangSheetBuilder() {
             <div style={{padding:"12px 18px",fontSize:11,color:C.text}}>
               {[
                 ["V","Select tool"],["H","Pan / Hand tool"],["Del / Backspace","Delete selected"],
-                ["Ctrl+C","Copy"],["Ctrl+V","Paste"],["Ctrl+D","Duplicate"],
+                ["Ctrl+X","Cut"],["Ctrl+C","Copy"],["Ctrl+V","Paste"],["Ctrl+D","Duplicate"],
                 ["Ctrl+A","Select all (cycles group → all)"],
                 ["Ctrl+Z","Undo"],["Ctrl+Y / Ctrl+Shift+Z","Redo"],
                 ["Ctrl+0","Fit view"],["Ctrl+G","Toggle grid"],["Ctrl+R","Toggle rulers"],
