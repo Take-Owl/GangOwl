@@ -2496,6 +2496,13 @@ export default function GangSheetBuilder() {
       onProgress(i,placements.length);
       const p=placements[i];
       if(cache.has(p.src)) continue;
+      // Try to use the already-loaded image from the canvas cache first
+      const existing=imgCache[p.src];
+      if(existing&&existing.complete&&existing.naturalWidth>0){
+        cache.set(p.src,existing);
+        continue;
+      }
+      // Fallback: load fresh (for HTTP URLs that need crossOrigin)
       await new Promise(res=>{
         const img=new Image();
         if(p.src.startsWith("http"))img.crossOrigin="anonymous";
