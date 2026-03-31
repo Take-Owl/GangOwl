@@ -2534,19 +2534,23 @@ export default function GangSheetBuilder() {
       const right=px2+pw2,bottom=py2+ph2;
       if(right<tileX||px2>tileX+tileW||bottom<tileY||py2>tileY+tileH){skippedBounds++;continue;}
       drawn++;
+      // For 90/270° rotated items, w/h are the footprint (swapped).
+      // drawImage needs original proportions so the image isn't warped.
+      const isRot90 = p.rotation === 90 || p.rotation === 270;
+      const dw2 = isRot90 ? ph2 : pw2, dh2 = isRot90 ? pw2 : ph2;
       ctx.save();
       ctx.translate(px2-tileX+pw2/2,py2-tileY+ph2/2);
       if(p.rotation)ctx.rotate((p.rotation*Math.PI)/180);
       if(p.flipH)ctx.scale(-1,1);if(p.flipV)ctx.scale(1,-1);
-      ctx.drawImage(img,-pw2/2,-ph2/2,pw2,ph2);
+      ctx.drawImage(img,-dw2/2,-dh2/2,dw2,dh2);
       if(p.cutEnabled&&p.cutShape&&p.cutShape!=="none"){
         if(p.cutShape==="die-cut"){
           const osPx=ipx(p.cutOffset||0,dpi);
-          const dc=buildDieCutCanvas(img,pw2,ph2,osPx,p.cutColor,p.cutWidth||1);
-          if(dc){const sx=pw2/dc.cw,sy=ph2/dc.ch;ctx.drawImage(dc.canvas,-dc.pad*sx-pw2/2,-dc.pad*sy-ph2/2,dc.tw*sx,dc.th*sy);}
+          const dc=buildDieCutCanvas(img,dw2,dh2,osPx,p.cutColor,p.cutWidth||1);
+          if(dc){const sx=dw2/dc.cw,sy=dh2/dc.ch;ctx.drawImage(dc.canvas,-dc.pad*sx-dw2/2,-dc.pad*sy-dh2/2,dc.tw*sx,dc.th*sy);}
         } else {
           const osPx=ipx(p.cutOffset||0,dpi),rPx=ipx(p.cutRadius||0,dpi);
-          const contour=getCutContour(p.src,p.cutShape,pw2,ph2,osPx,rPx);
+          const contour=getCutContour(p.src,p.cutShape,dw2,dh2,osPx,rPx);
           if(contour){ctx.strokeStyle=p.cutColor||"#FF0000";ctx.lineWidth=p.cutWidth||1;ctx.stroke(contour);}
         }
       }
